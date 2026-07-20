@@ -32,12 +32,16 @@ todos = [v for fase in checklist.values() for v in fase.values()]
 prog = sum(todos) / len(todos) if todos else 0
 st.progress(prog, text=f"Constituição: {prog*100:.0f}% concluída")
 
+classes = params.get("classes", [])
+sub_pct = next((c["pct"] for c in classes if c.get("residual")), 0)
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("PL alvo (R$ mi)", f"{params.get('pl_total', 0)/1e6:,.0f}")
-c2.metric("Sênior", f"{params.get('pct_senior', 0)*100:.0f}%")
-c3.metric("Subordinação",
-          f"{(1 - params.get('pct_senior', 0) - params.get('pct_mezanino', 0))*100:.0f}%")
+c2.metric("Classes de cotas", len(classes))
+c3.metric("Subordinação", f"{sub_pct*100:.0f}%")
 c4.metric("Revolvência", f"{params.get('meses_revolvencia', 0)} meses")
+if classes:
+    st.caption("Estrutura aprovada: " + " → ".join(
+        f"{c['nome']} {c['pct']*100:.0f}%" for c in classes))
 
 st.divider()
 alterado = False

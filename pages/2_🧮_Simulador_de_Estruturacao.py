@@ -1,55 +1,82 @@
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
 import db
 from engine.conceitos import ajuda
 from engine.parser_operacao import interpretar_llm, interpretar_local
-from engine.waterfall import Estrutura, simular, stress_breakeven
+from engine.waterfall import Classe, Estrutura, simular, stress_breakeven
 
 st.set_page_config(page_title="Simulador de estruturação", page_icon="🧮",
                    layout="wide")
 db.init_db()
 
-
-def _cdi_para_am(cdi_aa: float, spread_aa: float) -> float:
-    """CDI + spread (% a.a.) → taxa mensal equivalente."""
-    return (1 + (cdi_aa + spread_aa) / 100) ** (1 / 12) - 1
+BENCHMARKS = ["CDI + spread (a.a.)", "% do CDI", "Prefixado (a.a.)",
+              "Fixa (a.m.)"]
 
 
-# ---------------------------------------------------------------- defaults
-DEFAULTS = dict(pl=100e6, pct_sen=75, pct_mez=10, modo_taxa="CDI + spread (a.a.)",
-                cdi_aa=12.0, spread_sen=3.0, spread_mez=6.0,
-                t_sen_am=1.10, t_mez_am=1.40, t_ces=2.20, prazo=3, revolv=24,
+def _taxa_am(benchmark: str, valor: float, cdi_aa: float) -> float:
+    cdi_am = (1 + cdi_aa / 100) ** (1 / 12) - 1
+    if benchmark == "CDI + spread (a.a.)":
+        return (1 + (cdi_aa + valor) / 100) ** (1 / 12) - 1
+    if benchmark == "% do CDI":
+        return cdi_am * valor / 100
+    if benchmark == "Prefixado (a.a.)":
+        return (1 + valor / 100) ** (1 / 12) - 1
+    return valor / 100  # Fixa (a.m.)
+
+
+CLASSES_PADRAO = pd.DataFrame([
+    {"Classe": "Sênior", "% do PL": 75.0,
+     "Benchmark": "CDI + spread (a.a.)", "Valor": 3.0},
+    {"Classe": "Mezanino", "% do PL": 10.0,
+     "Benchmark": "CDI + spread (a.a.)", "Valor": 6.0},
+])
+
+DEFAULTS = dict(pl=100e6, cdi_aa=12.0, t_ces=2.20, prazo=3, revolv=24,
                 prep=1.0, inad=0.80, recup=30, custos=1.20, stress=1.0)
 for k, v in DEFAULTS.items():
     st.session_state.setdefault(k, v)
+if "classes_df" not in st.session_state:
+    st.session_state["classes_df"] = CLASSES_PADRAO.copy()
 
 # aplica parâmetros vindos do interpretador ANTES de criar os widgets
 if pend := st.session_state.pop("_aplicar", None):
-    mapa = {"pl_total": ("pl", lambda v: float(v)),
-            "pct_senior": ("pct_sen", lambda v: int(round(v * 100))),
-            "pct_mezanino": ("pct_mez", lambda v: int(round(v * 100))),
-            "cdi_aa": ("cdi_aa", float),
-            "spread_senior": ("spread_sen", float),
-            "spread_mezanino": ("spread_mez", float),
-            "taxa_cessao_am": ("t_ces", lambda v: round(v * 100, 2)),
-            "prazo_medio_meses": ("prazo", int),
-            "meses_revolvencia": ("revolv", int),
-            "inadimplencia_am_pct": ("inad", float)}
-    for origem, (chave, conv) in mapa.items():
+    simples = {"pl_total": ("pl", float), "cdi_aa": ("cdi_aa", float),
+               "taxa_cessao_am": ("t_ces", lambda v: round(v * 100, 2)),
+               "prazo_medio_meses": ("prazo", int),
+               "meses_revolvencia": ("revolv", int),
+               "inadimplencia_am_pct": ("inad", float)}
+    for origem, (chave, conv) in simples.items():
         if origem in pend:
             st.session_state[chave] = conv(pend[origem])
-    if "spread_senior" in pend or "spread_mezanino" in pend:
-        st.session_state["modo_taxa"] = "CDI + spread (a.a.)"
+    cdf = st.session_state["classes_df"].copy()
+
+    def _linha(nome_parcial):
+        hits = cdf.index[cdf["Classe"].str.lower()
+                         .str.contains(nome_parcial, na=False)]
+        return hits[0] if len(hits) else None
+
+    for chave_pct, chave_sp, alvo in [("pct_senior", "spread_senior", "nior"),
+                                      ("pct_mezanino", "spread_mezanino",
+                                       "mez")]:
+        i = _linha(alvo)
+        if i is None:
+            continue
+        if chave_pct in pend:
+            cdf.at[i, "% do PL"] = round(pend[chave_pct] * 100, 1)
+        if chave_sp in pend:
+            cdf.at[i, "Benchmark"] = "CDI + spread (a.a.)"
+            cdf.at[i, "Valor"] = float(pend[chave_sp])
+    st.session_state["classes_df"] = cdf
 
 st.title("Simulador de estruturação")
-st.caption("Peça de decisão do comitê: cascata de pagamentos, stress de "
-           "inadimplência e break-even da sênior — antes de o banco "
-           "comprometer capital como cotista.")
+st.caption("Peça de decisão do comitê: estrutura multiclasses com pagamento "
+           "sequencial por senioridade, stress de inadimplência e break-even "
+           "— antes de o banco comprometer capital como cotista.")
 
 # ------------------------------------------------- descrever a operação
-with st.expander("✍️ Descrever a operação (a IA preenche os parâmetros)",
-                 expanded=False):
+with st.expander("✍️ Descrever a operação (a IA preenche os parâmetros)"):
     st.caption("Escreva como você falaria com a mesa: "
                "*\"FIDC de duplicatas de 80 milhões, sênior de 70% a CDI+3,5, "
                "mezanino de 10% a CDI+6, cessão de 2,4% a.m., prazo médio de "
@@ -83,62 +110,62 @@ with st.expander("✍️ Descrever a operação (a IA preenche os parâmetros)",
             else:
                 st.info("Não identifiquei parâmetros. Tente citar valores "
                         "como no exemplo acima.")
-    c_b.caption("🎤 Descrição por voz: use o microfone do teclado do celular "
-                "nesta caixa. Transcrição de áudio nativa entra na próxima "
-                "fase (requer chave de API em *Settings → Secrets*).")
+    c_b.caption("🎤 Por voz: use o microfone do teclado do celular nesta "
+                "caixa. Transcrição nativa de áudio entra na próxima fase "
+                "(requer chave de API em *Settings → Secrets*).")
 
 if lg := st.session_state.pop("_log_parser", None):
     fonte, itens = lg
     st.success(f"Parâmetros aplicados via {fonte}: " + " · ".join(itens) +
-               ". Revise nos controles ao lado antes de aprovar.")
+               ". Revise antes de aprovar.")
+
+# ---------------------------------------------------------- classes de cotas
+st.subheader("Classes de cotas")
+st.caption("Ordem = senioridade (1ª linha recebe primeiro). Adicione ou "
+           "remova linhas para séries e classes extras — ex.: Sênior A, "
+           "Sênior B, Mezanino. A subordinada é o residual, calculado "
+           "automaticamente.")
+cdf = st.data_editor(
+    st.session_state["classes_df"], num_rows="dynamic", width="stretch",
+    key="editor_classes",
+    column_config={
+        "Classe": st.column_config.TextColumn(required=True),
+        "% do PL": st.column_config.NumberColumn(min_value=1.0,
+                                                 max_value=95.0, step=1.0,
+                                                 format="%.1f%%"),
+        "Benchmark": st.column_config.SelectboxColumn(options=BENCHMARKS,
+                                                      required=True),
+        "Valor": st.column_config.NumberColumn(
+            step=0.25, help="Spread (a.a.), % do CDI, taxa prefixada (a.a.) "
+                            "ou taxa fixa (a.m.), conforme o benchmark."),
+    })
+cdf = cdf.dropna(subset=["Classe"]).reset_index(drop=True)
+soma_pct = float(cdf["% do PL"].fillna(0).sum())
+pct_sub = round(100 - soma_pct, 2)
+m_sub1, m_sub2 = st.columns([1, 3])
+m_sub1.metric("Subordinada (residual)", f"{pct_sub:.1f}%",
+              help=ajuda("subordinada"))
+if pct_sub <= 0:
+    m_sub2.error("As classes somam ≥ 100% do PL — sobra nada para a "
+                 "subordinada. Reduza os percentuais.")
+    st.stop()
+if len(cdf) == 0:
+    st.error("Inclua ao menos uma classe além da subordinada.")
+    st.stop()
 
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
     st.caption("📖 Dúvida em algum parâmetro? Toque no (?) de cada campo ou "
                "abra a página **Guia de Conceitos** no menu.")
-
-    with st.expander("💰 Estrutura de capital", expanded=True):
+    with st.expander("💰 Fundo e cenário", expanded=True):
         pl = st.number_input("PL total (R$)", min_value=1e6, step=10e6,
                              format="%.0f", key="pl", help=ajuda("pl_total"))
-        pct_sen = st.slider("Cota sênior (% do PL)", 40, 90, key="pct_sen",
-                            help=ajuda("senior")) / 100
-        pct_mez = st.slider("Cota mezanino (% do PL)", 0, 30, key="pct_mez",
-                            help=ajuda("mezanino")) / 100
-        if pct_sen + pct_mez >= 1:
-            st.error("Sênior + mezanino deve ser menor que 100%.")
-            st.stop()
-        st.metric("Subordinada (residual)",
-                  f"{(1 - pct_sen - pct_mez) * 100:.0f}%",
-                  help=ajuda("subordinada"))
-
-    with st.expander("📈 Taxas", expanded=True):
-        modo = st.radio("Como informar as taxas das cotas?",
-                        ["CDI + spread (a.a.)", "Taxa fixa (a.m.)"],
-                        key="modo_taxa", horizontal=True)
-        if modo == "CDI + spread (a.a.)":
-            cdi = st.number_input("CDI projetado (% a.a.)", min_value=0.0,
-                                  step=0.25, key="cdi_aa",
-                                  help="Cenário de CDI usado para converter "
-                                       "os spreads em taxa mensal do modelo.")
-            sp_s = st.number_input("Sênior: CDI + (% a.a.)", step=0.25,
-                                   key="spread_sen", help=ajuda("taxa_senior"))
-            sp_m = st.number_input("Mezanino: CDI + (% a.a.)", step=0.25,
-                                   key="spread_mez", help=ajuda("taxa_mezanino"))
-            t_sen = _cdi_para_am(cdi, sp_s)
-            t_mez = _cdi_para_am(cdi, sp_m)
-            st.caption(f"Equivalente mensal → sênior {t_sen*100:.2f}% · "
-                       f"mezanino {t_mez*100:.2f}%")
-        else:
-            t_sen = st.number_input("Alvo sênior (% a.m.)", step=0.05,
-                                    key="t_sen_am",
-                                    help=ajuda("taxa_senior")) / 100
-            t_mez = st.number_input("Alvo mezanino (% a.m.)", step=0.05,
-                                    key="t_mez_am",
-                                    help=ajuda("taxa_mezanino")) / 100
+        cdi = st.number_input("CDI projetado (% a.a.)", min_value=0.0,
+                              step=0.25, key="cdi_aa",
+                              help="Usado nos benchmarks CDI+ e % do CDI.")
         t_ces = st.number_input("Taxa de cessão da carteira (% a.m.)",
                                 step=0.05, key="t_ces",
                                 help=ajuda("taxa_cessao")) / 100
-
     with st.expander("📅 Carteira e prazos", expanded=False):
         prazo = st.slider("Prazo médio dos recebíveis (meses)", 1, 12,
                           key="prazo", help=ajuda("prazo_medio"))
@@ -146,7 +173,6 @@ with st.sidebar:
                            help=ajuda("revolvencia"))
         prep = st.number_input("Pré-pagamento (% a.m.)", step=0.5, key="prep",
                                help=ajuda("prepagamento")) / 100
-
     with st.expander("⚠️ Risco", expanded=False):
         inad = st.number_input("Inadimplência base (% dos vencimentos/mês)",
                                step=0.10, key="inad",
@@ -158,72 +184,87 @@ with st.sidebar:
         stress = st.slider("Stress sobre a inadimplência (x)", 1.0, 15.0,
                            step=0.5, key="stress", help=ajuda("stress"))
 
-e = Estrutura(pl_total=pl, pct_senior=pct_sen, pct_mezanino=pct_mez,
-              taxa_senior_am=t_sen, taxa_mezanino_am=t_mez,
-              taxa_cessao_am=t_ces, prazo_medio_meses=prazo,
-              meses_revolvencia=revolv, inadimplencia_am=inad,
-              prepagamento_am=prep, recuperacao=recup, custos_aa=custos,
-              stress=stress)
+classes = [Classe(str(row["Classe"]), float(row["% do PL"]) / 100,
+                  _taxa_am(row["Benchmark"], float(row["Valor"] or 0), cdi))
+           for _, row in cdf.iterrows()]
+classes.append(Classe("Subordinada", pct_sub / 100, 0.0, residual=True))
+
+e = Estrutura(pl_total=pl, classes=classes, taxa_cessao_am=t_ces,
+              prazo_medio_meses=prazo, meses_revolvencia=revolv,
+              inadimplencia_am=inad, prepagamento_am=prep, recuperacao=recup,
+              custos_aa=custos, stress=stress)
 r = simular(e)
 res = r.resumo
+pc = r.por_classe
 
 # ------------------------------------------------------------------ métricas
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Sênior íntegra?", "Sim ✅" if res["senior_integra"] else "NÃO ⚠️",
-          delta=None if res["senior_integra"]
-          else f"-R$ {res['senior_shortfall']/1e6:,.1f} mi")
-tir_s = res["tir_senior_aa"]
-c2.metric("TIR sênior (a.a.)", f"{tir_s*100:.2f}%" if tir_s else "—",
-          help=ajuda("tir"))
-c3.metric("Perdas totais vs subordinada", f"{res['perdas_vs_sub']*100:.0f}%")
-c4.metric("Retorno da sub (múltiplo)", f"{res['retorno_sub_multiplo']:.2f}x")
-be = stress_breakeven(e)
-c5.metric("Break-even sênior", f"{be}x inad. base" if be else "abaixo do base ⚠️",
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Todas as classes íntegras?",
+          "Sim ✅" if res["todas_integras"] else "NÃO ⚠️")
+c2.metric("Perdas totais vs subordinada", f"{res['perdas_vs_sub']*100:.0f}%")
+c3.metric("Retorno da sub (múltiplo)", f"{res['retorno_sub_multiplo']:.2f}x")
+be = stress_breakeven(e, 0)
+c4.metric(f"Break-even {classes[0].nome}",
+          f"{be}x inad. base" if be else "abaixo do base ⚠️",
           help=ajuda("stress"))
 
-if not res["senior_integra"]:
-    st.error("Neste cenário a cota sênior sofre perda — a estrutura não passa "
-             "no comitê. Aumente a subordinação, reduza a revolvência ou "
-             "melhore a taxa de cessão.")
+tabela = pc.copy()
+tabela["TIR (a.a.)"] = tabela["tir_aa"].map(
+    lambda v: f"{v*100:.2f}%" if v is not None and not pd.isna(v) else "—")
+tabela["% do PL"] = (tabela["pct"] * 100).map("{:.1f}%".format)
+tabela["Aporte (R$ mi)"] = (tabela["aporte"] / 1e6).round(1)
+tabela["Recebido (R$ mi)"] = (tabela["recebido"] / 1e6).round(1)
+tabela["Íntegra"] = tabela["integra"].map({True: "✅", False: "⚠️"})
+st.dataframe(tabela[["classe", "% do PL", "Aporte (R$ mi)",
+                     "Recebido (R$ mi)", "TIR (a.a.)", "Íntegra"]],
+             hide_index=True, width="stretch")
+
+if not res["todas_integras"]:
+    piores = pc[~pc["integra"]]["classe"].tolist()
+    st.error(f"Classe(s) com perda neste cenário: {', '.join(piores)}. "
+             "Aumente a subordinação, reduza a revolvência ou melhore a "
+             "taxa de cessão.")
 elif be and be < 3:
-    st.warning(f"Sênior íntegra, mas o colchão é curto: rompe a {be}x a "
-               "inadimplência base. Comitês costumam exigir folga maior.")
+    st.warning(f"{classes[0].nome} íntegra, mas o colchão é curto: rompe a "
+               f"{be}x a inadimplência base.")
 
 # ------------------------------------------------------------------ gráficos
 fluxo = r.fluxo
 g1, g2 = st.columns(2)
-
 with g1:
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=fluxo["mes"], y=fluxo["carteira"] / 1e6,
                              name="Carteira", fill="tozeroy"))
-    fig.add_trace(go.Scatter(x=fluxo["mes"], y=fluxo["saldo_senior"] / 1e6,
-                             name="Saldo sênior"))
-    fig.add_trace(go.Scatter(x=fluxo["mes"], y=fluxo["saldo_mezanino"] / 1e6,
-                             name="Saldo mezanino"))
+    for c in classes[:-1]:
+        fig.add_trace(go.Scatter(x=fluxo["mes"],
+                                 y=fluxo[f"saldo_{c.nome}"] / 1e6,
+                                 name=f"Saldo {c.nome}"))
     fig.add_vline(x=e.meses_revolvencia, line_dash="dot",
                   annotation_text="fim da revolvência")
     fig.update_layout(title="Carteira e saldos por classe (R$ mi)",
                       xaxis_title="Mês", height=380,
-                      legend=dict(orientation="h", y=-0.25))
+                      legend=dict(orientation="h", y=-0.3))
     st.plotly_chart(fig, width="stretch")
-
 with g2:
     fig2 = go.Figure()
-    for col, nome in [("pago_senior", "Sênior"), ("pago_mezanino", "Mezanino"),
-                      ("pago_sub", "Subordinada"), ("despesas", "Despesas")]:
-        fig2.add_trace(go.Bar(x=fluxo["mes"], y=fluxo[col] / 1e6, name=nome))
+    for c in classes[:-1]:
+        fig2.add_trace(go.Bar(x=fluxo["mes"], y=fluxo[f"pago_{c.nome}"] / 1e6,
+                              name=c.nome))
+    fig2.add_trace(go.Bar(x=fluxo["mes"], y=fluxo["pago_residual"] / 1e6,
+                          name="Subordinada"))
+    fig2.add_trace(go.Bar(x=fluxo["mes"], y=fluxo["despesas"] / 1e6,
+                          name="Despesas"))
     fig2.update_layout(barmode="stack",
                        title="Cascata: pagamentos mensais (R$ mi)",
                        xaxis_title="Mês", height=380,
-                       legend=dict(orientation="h", y=-0.25))
+                       legend=dict(orientation="h", y=-0.3))
     st.plotly_chart(fig2, width="stretch")
 
 fig3 = go.Figure()
 fig3.add_trace(go.Scatter(x=fluxo["mes"], y=fluxo["perdas_acum"] / 1e6,
                           name="Perdas acumuladas", fill="tozeroy",
                           line=dict(color="#B33A3A")))
-fig3.add_hline(y=e.pl_total * e.pct_sub / 1e6, line_dash="dash",
+fig3.add_hline(y=e.pl_total * pct_sub / 100 / 1e6, line_dash="dash",
                annotation_text="Subordinada inicial")
 fig3.update_layout(title="Perdas acumuladas vs colchão de subordinação (R$ mi)",
                    xaxis_title="Mês", height=300)
@@ -247,14 +288,21 @@ if origs:
                                    o["razao_social"].split()[0]
                                    for o in origs if o["id"] == orig_sel))
     if cc.button("Aprovar →", width="stretch",
-                 disabled=not res["senior_integra"]):
-        deal_id = db.criar_deal(orig_sel, nome_fundo,
-                                {**e.__dict__, "resumo": res})
+                 disabled=not res["todas_integras"]):
+        params = dict(pl_total=pl, taxa_cessao_am=t_ces,
+                      prazo_medio_meses=prazo, meses_revolvencia=revolv,
+                      inadimplencia_am=inad, prepagamento_am=prep,
+                      recuperacao=recup, custos_aa=custos, cdi_aa=cdi,
+                      classes=[{"nome": c.nome, "pct": c.pct,
+                                "taxa_am": c.taxa_am,
+                                "residual": c.residual} for c in classes],
+                      resumo=res)
+        deal_id = db.criar_deal(orig_sel, nome_fundo, params)
         db.mover_etapa(orig_sel, "Aprovado")
-        st.success(f"Deal #{deal_id} criado com os parâmetros desta simulação. "
-                   "Acompanhe na Esteira de Constituição.")
-    if not res["senior_integra"]:
-        st.caption("A aprovação fica bloqueada enquanto a sênior sofrer perda "
-                   "no cenário simulado.")
+        st.success(f"Deal #{deal_id} criado com os parâmetros desta "
+                   "simulação. Acompanhe na Esteira de Constituição.")
+    if not res["todas_integras"]:
+        st.caption("A aprovação fica bloqueada enquanto houver classe com "
+                   "perda no cenário simulado.")
 else:
     st.info("Cadastre um originador no funil para vincular a estrutura.")
