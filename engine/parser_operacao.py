@@ -28,7 +28,7 @@ def interpretar_local(texto: str):
     p, log = {}, []
 
     # PL: "R$ 100 milhões", "fundo de 80 mi", "PL de 50mm"
-    m = re.search(rf"(?:pl|fundo|patrim[oô]nio|opera[cç][aã]o)\D{{0,20}}r?\$?\s*{NUM}\s*(mm|mi(?:lh[oõ]es|lh[aã]o)?|bi(?:lh[oõ]es|lh[aã]o)?)", t)
+    m = re.search(rf"(?:pl|fidc|fundo|patrim[oô]nio|opera[cç][aã]o)\D{{0,20}}r?\$?\s*{NUM}\s*(mm|mi(?:lh[oõ]es|lh[aã]o)?|bi(?:lh[oõ]es|lh[aã]o)?)", t)
     if not m:
         m = re.search(rf"r\$\s*{NUM}\s*(mm|mi(?:lh[oõ]es|lh[aã]o)?|bi(?:lh[oõ]es|lh[aã]o)?)", t)
     if m:
