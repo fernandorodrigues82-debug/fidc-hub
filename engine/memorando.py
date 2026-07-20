@@ -118,6 +118,17 @@ def gerar_memorando(*, nome_fundo: str, originador: dict, estrutura,
     if estrutura.sub_minima:
         _p(doc, f"Gatilho de subordinação mínima (evento de avaliação): "
                f"{estrutura.sub_minima*100:.0f}%.")
+    if estrutura.meses_rampa:
+        _p(doc, f"Rampa de integralização: capital chamado "
+               f"progressivamente ao longo de {estrutura.meses_rampa} "
+               "meses — cada classe só passa a render sobre o capital já "
+               "efetivamente chamado, evitando carry negativo sobre "
+               "capital captado e ainda não investido.")
+    if estrutura.meses_carencia:
+        _p(doc, f"Carência de {estrutura.meses_carencia} meses entre o "
+               "fim da revolvência e o início da amortização — o fundo "
+               "para de reinvestir e acumula caixa antes de começar a "
+               "pagar principal às cotas.")
     cab = ["Classe", "% do PL", "Taxa-alvo (a.m.)", "Ordem de senioridade"]
     linhas = [[c.nome, f"{c.pct*100:.1f}%",
               "residual" if c.residual else f"{c.taxa_am*100:.2f}%",

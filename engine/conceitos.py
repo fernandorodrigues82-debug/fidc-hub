@@ -154,6 +154,34 @@ CONCEITOS = {
                "reinvestimento cedo preserva caixa e eleva drasticamente o "
                "break-even — compare a simulação com e sem gatilho.",
     ),
+    "rampa": dict(
+        titulo="Rampa de integralização",
+        resumo="Período em que o capital das cotas é chamado "
+               "(integralizado) progressivamente, em vez de 100% já no "
+               "mês 1. Cada classe só passa a render sobre o capital que "
+               "já foi efetivamente chamado e investido em recebíveis.",
+        faixa="Tipicamente de 3 a 12 meses, calibrado pela capacidade real "
+              "de originação do cedente — compare com a 'rampa implícita "
+              "pela capacidade' calculada no cadastro do originador.",
+        efeito="Evita 'carry' negativo: sem rampa, o capital capturado e "
+               "ainda não investido em recebíveis já está rendendo o "
+               "benchmark prometido às cotas seniores — um custo que "
+               "ninguém está cobrindo. Com rampa, o capital só é chamado "
+               "(e só passa a render) na medida em que é deployado.",
+    ),
+    "carencia": dict(
+        titulo="Carência antes da amortização",
+        resumo="Período entre o fim da revolvência e o início da "
+               "amortização em que o fundo já parou de reinvestir, mas "
+               "ainda não começou a pagar principal às cotas — o caixa "
+               "recebido nesse meio-tempo só se acumula como reserva.",
+        faixa="0 a 6 meses é comum, usado para formar um colchão de caixa "
+              "antes de iniciar os pagamentos programados às cotas.",
+        efeito="Adia o início dos pagamentos de principal, mas os aumenta "
+               "quando começam (mais caixa acumulado). Não afeta a taxa-"
+               "alvo, que continua acumulando sobre o saldo das classes "
+               "durante toda a carência.",
+    ),
 }
 
 

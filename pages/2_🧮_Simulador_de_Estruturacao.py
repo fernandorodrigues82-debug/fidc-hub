@@ -39,6 +39,7 @@ CLASSES_PADRAO = pd.DataFrame([
 ])
 
 DEFAULTS = dict(pl=100e6, sub_min=12.0, cdi_aa=12.0, t_ces=2.20, prazo=3, revolv=24,
+                rampa=0, carencia=0,
                 prep=1.0, inad=0.80, recup=30, custos=1.20, stress=1.0)
 for k, v in DEFAULTS.items():
     st.session_state.setdefault(k, v)
@@ -176,6 +177,12 @@ with st.sidebar:
                           key="prazo", help=ajuda("prazo_medio"))
         revolv = st.slider("Revolvência (meses)", 0, 60, key="revolv",
                            help=ajuda("revolvencia"))
+        st.session_state["rampa"] = min(st.session_state.get("rampa", 0), revolv)
+        rampa = st.slider(
+            "Rampa de integralização (meses)", 0, max(revolv, 0),
+            key="rampa", help=ajuda("rampa"))
+        carencia = st.slider("Carência antes da amortização (meses)", 0, 24,
+                             key="carencia", help=ajuda("carencia"))
         prep = st.number_input("Pré-pagamento (% a.m.)", step=0.5, key="prep",
                                help=ajuda("prepagamento")) / 100
     with st.expander("⚠️ Risco", expanded=False):
@@ -193,7 +200,7 @@ with st.sidebar:
             max_value=60.0, step=1.0, key="sub_min",
             help="Evento de avaliação: se o índice de subordinação "
                  "dinâmico — (ativos − dívida das classes) / ativos — cair "
-                 "abaixo deste mínimo durante a revolvência, o fundo para "
+                 "abaixo deste mínimo antes da amortização, o fundo para "
                  "de reinvestir e amortiza antecipadamente, protegendo as "
                  "classes por senioridade. 0 = sem gatilho.")
 
@@ -206,7 +213,8 @@ e = Estrutura(pl_total=pl, classes=classes, taxa_cessao_am=t_ces,
               prazo_medio_meses=prazo, meses_revolvencia=revolv,
               inadimplencia_am=inad, prepagamento_am=prep, recuperacao=recup,
               custos_aa=custos, stress=stress,
-              sub_minima=(sub_min_pct / 100) if sub_min_pct > 0 else None)
+              sub_minima=(sub_min_pct / 100) if sub_min_pct > 0 else None,
+              meses_rampa=rampa, meses_carencia=carencia)
 r = simular(e)
 res = r.resumo
 pc = r.por_classe
@@ -262,8 +270,15 @@ with g1:
         fig.add_trace(go.Scatter(x=fluxo["mes"],
                                  y=fluxo[f"saldo_{c.nome}"] / 1e6,
                                  name=f"Saldo {c.nome}"))
+    if e.meses_rampa:
+        fig.add_vline(x=e.meses_rampa, line_dash="dash", line_color="#999",
+                      annotation_text="100% chamado")
     fig.add_vline(x=e.meses_revolvencia, line_dash="dot",
                   annotation_text="fim da revolvência")
+    if e.meses_carencia:
+        fig.add_vline(x=e.meses_revolvencia + e.meses_carencia,
+                      line_dash="dot", line_color="#B33A3A",
+                      annotation_text="início da amortização")
     fig.update_layout(title="Carteira e saldos por classe (R$ mi)",
                       xaxis_title="Mês", height=380,
                       legend=dict(orientation="h", y=-0.3))
@@ -424,7 +439,7 @@ if origs:
 
     fp_atual = (round(pl), tuple((c.nome, round(c.pct, 4), round(c.taxa_am, 6))
                                  for c in classes), round(t_ces, 6),
-               prazo, revolv, round(inad, 6), round(stress, 2))
+               prazo, revolv, rampa, carencia, round(inad, 6), round(stress, 2))
     mc_res = st.session_state.get("mc_resultado")
     mc_fp = st.session_state.get("mc_fingerprint")
     mc_stats_memo = mc_res[1] if mc_res and mc_fp == fp_atual else None
@@ -465,7 +480,7 @@ if origs:
                       prazo_medio_meses=prazo, meses_revolvencia=revolv,
                       inadimplencia_am=inad, prepagamento_am=prep,
                       recuperacao=recup, custos_aa=custos, cdi_aa=cdi,
-                      stress=stress,
+                      stress=stress, meses_rampa=rampa, meses_carencia=carencia,
                       sub_minima=(sub_min_pct / 100) if sub_min_pct > 0 else None,
                       classes=[{"nome": c.nome, "pct": c.pct,
                                 "taxa_am": c.taxa_am,

@@ -111,7 +111,8 @@ if st.button("🎲 Rodar simulação de retornos", type="primary",
                                      round(c.taxa_am, 6))
                                     for c in base.classes),
         round(base.taxa_cessao_am, 6), base.prazo_medio_meses,
-        base.meses_revolvencia, round(base.inadimplencia_am, 6),
+        base.meses_revolvencia, base.meses_rampa, base.meses_carencia,
+        round(base.inadimplencia_am, 6),
         round(base.stress, 2))
 
 if "mc_resultado" not in st.session_state:

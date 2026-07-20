@@ -4,15 +4,18 @@ Estrutura de capital genérica: lista de classes ordenadas por senioridade
 (1ª = mais sênior). A última classe é sempre a residual (subordinada/equity):
 não tem taxa-alvo e recebe o que sobra depois de todas as outras.
 
-Cascata mensal:
-1. Carteira rende a taxa de cessão; fração 1/prazo_medio (+ pré-pagamento)
-   do principal vence; inadimplência (com recuperação) incide sobre o que
-   vence no mês.
-2. Despesas saem do caixa antes de qualquer classe.
-3. Revolvência: caixa líquido recompra direitos creditórios.
+Cascata mensal, em até quatro fases:
+1. Rampa (opcional): o capital é chamado (integralizado) progressivamente
+   em vez de 100% no mês 1 — cada classe só passa a render sobre o que já
+   foi chamado, evitando "carry" negativo de capital captado e parado.
+2. Revolvência: caixa (coleta + capital recém-chamado) recompra direitos
+   creditórios.
+3. Carência (opcional): reinvestimento para — o fundo não compra mais
+   recebíveis — mas a amortização ainda não começou; o caixa apenas se
+   acumula como reserva.
 4. Amortização: pagamento SEQUENCIAL — cada classe só recebe depois de a
    anterior estar 100% amortizada. As classes não-residuais acumulam a
-   taxa-alvo sobre o saldo devedor.
+   taxa-alvo sobre o saldo já chamado.
 
 Modelo de decisão (comitê), não de precificação contábil.
 """
@@ -49,8 +52,11 @@ class Estrutura:
     custos_aa: float = 0.012
     stress: float = 1.0
     sub_minima: float | None = None  # gatilho: índice mínimo de subordinação
-    # (ativos - dívida sênior/mez) / ativos. Se furar durante a revolvência,
+    # (ativos - dívida sênior/mez) / ativos. Se furar antes da amortização,
     # dispara evento de avaliação: para de reinvestir e amortiza antecipado.
+    meses_rampa: int = 0        # meses até 100% do PL estar chamado/investido
+    meses_carencia: int = 0     # meses entre o fim da revolvência e o
+    # início da amortização, sem reinvestir nem amortizar (só acumula caixa)
 
     def __post_init__(self):
         soma = sum(c.pct for c in self.classes)
@@ -60,6 +66,11 @@ class Estrutura:
         if not self.classes[-1].residual:
             raise ValueError("A última classe deve ser a residual "
                              "(subordinada).")
+        if self.meses_rampa and self.meses_rampa > self.meses_revolvencia:
+            raise ValueError("A rampa de integralização não pode ser mais "
+                             "longa que a revolvência "
+                             f"({self.meses_rampa} > "
+                             f"{self.meses_revolvencia} meses).")
 
     @property
     def pct_residual(self) -> float:
@@ -76,23 +87,46 @@ class Resultado:
 def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
     """vetor_inadimplencia: opcional, taxa de perda por mês (sobrepõe a
     inadimplência base x stress — usado pelo Monte Carlo)."""
-    n = e.meses_revolvencia + e.prazo_medio_meses * 3 + 6
+    n = (e.meses_revolvencia + e.meses_carencia
+        + e.prazo_medio_meses * 3 + 6)
     d = min(0.95, e.inadimplencia_am * e.stress)
     q = 1.0 / e.prazo_medio_meses
     despesa_mensal = e.pl_total * e.custos_aa / 12.0
 
     pagaveis = e.classes[:-1]          # com taxa-alvo, ordem de prioridade
     residual = e.classes[-1]
-    saldos = [e.pl_total * c.pct for c in pagaveis]
+    pct_pagaveis = [c.pct for c in pagaveis]
     sub_inicial = e.pl_total * residual.pct
 
-    carteira, caixa = e.pl_total, 0.0
+    saldos = [0.0] * len(pagaveis)     # capital JÁ chamado de cada classe
+    saldo_residual_chamado = 0.0
+    chamado_acum = 0.0                 # capital total já chamado (todas as classes)
+
+    carteira, caixa = 0.0, 0.0
     pagos = [0.0] * len(pagaveis)
+    chamadas = [[] for _ in pagaveis]  # série mensal de capital chamado
+    chamadas_residual = []
     pago_residual = perdas_acum = 0.0
     gatilho_mes = None
     linhas = []
 
     for m in range(1, n + 1):
+        # ---- chamada de capital (integralização progressiva, se houver rampa)
+        if e.meses_rampa and m <= e.meses_rampa:
+            alvo_chamado = e.pl_total * min(1.0, m / e.meses_rampa)
+        else:
+            alvo_chamado = e.pl_total
+        nova_chamada = max(0.0, alvo_chamado - chamado_acum)
+        chamado_acum += nova_chamada
+        chamada_res_mes = nova_chamada * residual.pct
+        saldo_residual_chamado += chamada_res_mes
+        chamadas_residual.append(chamada_res_mes)
+        for i, pct in enumerate(pct_pagaveis):
+            c_i = nova_chamada * pct
+            saldos[i] += c_i
+            chamadas[i].append(c_i)
+        carteira += nova_chamada  # capital chamado compra recebíveis direto
+
         d_m = d if vetor_inadimplencia is None else min(
             0.95, float(vetor_inadimplencia[m - 1]))
         juros = carteira * e.taxa_cessao_am
@@ -113,19 +147,27 @@ def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
         ativos = carteira + caixa
         divida = sum(saldos)
         indice_sub = (ativos - divida) / ativos if ativos > 1e-6 else 0.0
-        if (gatilho_mes is None and e.sub_minima is not None
-                and m <= e.meses_revolvencia and indice_sub < e.sub_minima):
-            gatilho_mes = m  # evento de avaliação: amortização antecipada
 
-        fase = ("revolvência" if m <= e.meses_revolvencia
-                and gatilho_mes is None else "amortização")
+        fase_natural = ("revolvência" if m <= e.meses_revolvencia else
+                        "carência" if m <= e.meses_revolvencia + e.meses_carencia
+                        else "amortização")
+        if (gatilho_mes is None and e.sub_minima is not None
+                and fase_natural in ("revolvência", "carência")
+                and indice_sub < e.sub_minima):
+            gatilho_mes = m  # evento de avaliação: amortização antecipada
+        fase = "amortização" if gatilho_mes is not None else fase_natural
+        if e.meses_rampa and m <= e.meses_rampa and fase == "revolvência":
+            fase = "rampa"
+
         amort = [0.0] * len(pagaveis)
         amort_res = 0.0
 
-        if fase == "revolvência":
+        if fase in ("rampa", "revolvência"):
             carteira += caixa
             caixa = 0.0
-        else:
+        elif fase == "carência":
+            pass  # não reinveste nem amortiza: caixa só se acumula
+        else:  # amortização
             if m == n:  # fim do horizonte: liquida carteira remanescente
                 caixa += carteira * (1 - d_m)
                 carteira = 0.0
@@ -143,6 +185,8 @@ def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
         linha = dict(mes=m, fase=fase, carteira=carteira, caixa=caixa,
                      perda_mes=perda - recup, perdas_acum=perdas_acum,
                      indice_subordinacao=indice_sub,
+                     capital_chamado_mes=nova_chamada,
+                     capital_chamado_acum=chamado_acum,
                      pago_residual=amort_res, despesas=pago_desp)
         for i, c in enumerate(pagaveis):
             linha[f"saldo_{c.nome}"] = saldos[i]
@@ -153,9 +197,22 @@ def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
 
     fluxo = pd.DataFrame(linhas)
 
-    def _tir(aporte, serie):
+    def _tir(serie_pago, serie_chamado):
         try:
-            r = npf.irr([-aporte] + list(serie))
+            total_chamado = sum(serie_chamado)
+            if not total_chamado:
+                return None
+            # Sem rampa (100% chamado no mês 1): replica exatamente a
+            # convenção original — aporte num "tempo zero" anterior à
+            # primeira atividade do mês 1 — para não alterar números já
+            # existentes só por causa da generalização do modelo.
+            if serie_chamado and abs(serie_chamado[0] - total_chamado) < 1e-6:
+                fluxos = [-total_chamado] + list(serie_pago)
+            else:
+                fluxos = [p - c for p, c in zip(serie_pago, serie_chamado)]
+            if all(abs(v) < 1e-9 for v in fluxos):
+                return None
+            r = npf.irr(fluxos)
             return None if r is None or np.isnan(r) else (1 + r) ** 12 - 1
         except Exception:
             return None
@@ -167,11 +224,11 @@ def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
         por_classe.append(dict(
             classe=c.nome, pct=c.pct, aporte=aporte, recebido=pagos[i],
             shortfall=shortfall, integra=shortfall < 1.0,
-            tir_aa=_tir(aporte, fluxo[f"pago_{c.nome}"])))
+            tir_aa=_tir(fluxo[f"pago_{c.nome}"], chamadas[i])))
     por_classe.append(dict(
         classe=residual.nome, pct=residual.pct, aporte=sub_inicial,
         recebido=pago_residual, shortfall=0.0, integra=True,
-        tir_aa=_tir(sub_inicial, fluxo["pago_residual"])))
+        tir_aa=_tir(fluxo["pago_residual"], chamadas_residual)))
     pc = pd.DataFrame(por_classe)
 
     resumo = dict(
@@ -276,7 +333,8 @@ def montecarlo(e: Estrutura, n_sims: int = 500, vol: float = 0.5,
     com percentis de TIR e probabilidades de perda.
     """
     rng = np.random.default_rng(seed)
-    n = e.meses_revolvencia + e.prazo_medio_meses * 3 + 6
+    n = (e.meses_revolvencia + e.meses_carencia
+        + e.prazo_medio_meses * 3 + 6)
     base = e.inadimplencia_am * e.stress
 
     linhas = []
@@ -329,4 +387,6 @@ def estrutura_de_params(params: dict) -> Estrutura:
         recuperacao=params.get("recuperacao", 0.30),
         custos_aa=params.get("custos_aa", 0.012),
         stress=params.get("stress", 1.0),
-        sub_minima=params.get("sub_minima"))
+        sub_minima=params.get("sub_minima"),
+        meses_rampa=params.get("meses_rampa", 0),
+        meses_carencia=params.get("meses_carencia", 0))
