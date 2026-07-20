@@ -206,6 +206,7 @@ e = Estrutura(pl_total=pl, classes=classes, taxa_cessao_am=t_ces,
 r = simular(e)
 res = r.resumo
 pc = r.por_classe
+st.session_state["estrutura_atual"] = e
 
 # ------------------------------------------------------------------ métricas
 c1, c2, c3, c4 = st.columns(4)
@@ -305,6 +306,13 @@ with g4:
 
 # ------------------------------------------- suporte da estrutura (comitê)
 st.divider()
+try:
+    st.page_link("pages/5_🎲_Simulacao_de_Retornos.py",
+                 label="🎲 Ver distribuição de retorno das cotas (Monte Carlo) →")
+except Exception:
+    st.caption("🎲 Abra **Simulação de Retornos** no menu para ver a "
+               "distribuição de TIR desta estrutura (Monte Carlo).")
+
 st.subheader("Suporte da estrutura — a pergunta do comitê")
 st.caption("Até quanto o fundo aguenta antes de a classe mais sênior sofrer "
            "perda, no cenário parametrizado (incluindo o gatilho, se ativo).")

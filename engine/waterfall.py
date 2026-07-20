@@ -73,7 +73,9 @@ class Resultado:
     resumo: dict = field(default_factory=dict)
 
 
-def simular(e: Estrutura) -> Resultado:
+def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
+    """vetor_inadimplencia: opcional, taxa de perda por mês (sobrepõe a
+    inadimplência base x stress — usado pelo Monte Carlo)."""
     n = e.meses_revolvencia + e.prazo_medio_meses * 3 + 6
     d = min(0.95, e.inadimplencia_am * e.stress)
     q = 1.0 / e.prazo_medio_meses
@@ -91,9 +93,11 @@ def simular(e: Estrutura) -> Resultado:
     linhas = []
 
     for m in range(1, n + 1):
+        d_m = d if vetor_inadimplencia is None else min(
+            0.95, float(vetor_inadimplencia[m - 1]))
         juros = carteira * e.taxa_cessao_am
         princ_venc = carteira * min(1.0, q + e.prepagamento_am)
-        perda = (juros + princ_venc) * d
+        perda = (juros + princ_venc) * d_m
         recup = perda * e.recuperacao
         caixa += juros + princ_venc - perda + recup
         carteira -= princ_venc
@@ -123,7 +127,7 @@ def simular(e: Estrutura) -> Resultado:
             caixa = 0.0
         else:
             if m == n:  # fim do horizonte: liquida carteira remanescente
-                caixa += carteira * (1 - d)
+                caixa += carteira * (1 - d_m)
                 carteira = 0.0
             for i in range(len(pagaveis)):       # sequencial por senioridade
                 amort[i] = min(caixa, saldos[i])
@@ -257,3 +261,52 @@ def curva_stress(e: Estrutura, max_mult: float | None = None,
                     row["recebido"] / alvo if alvo > 0 else 1.0)
         linhas.append(linha)
     return pd.DataFrame(linhas)
+
+
+def montecarlo(e: Estrutura, n_sims: int = 500, vol: float = 0.5,
+               rho: float = 0.6, seed: int = 42):
+    """Distribuição de retornos por classe via Monte Carlo.
+
+    A inadimplência mensal segue um processo lognormal com persistência
+    AR(1): meses ruins tendem a ser seguidos de meses ruins (ciclo de
+    crédito), em torno da inadimplência base x stress do cenário.
+
+    vol: desvio da lognormal (0,3 = carteira estável; 1,0 = muito volátil).
+    Retorna (df_sims, df_stats): resultados por simulação/classe e o resumo
+    com percentis de TIR e probabilidades de perda.
+    """
+    rng = np.random.default_rng(seed)
+    n = e.meses_revolvencia + e.prazo_medio_meses * 3 + 6
+    base = e.inadimplencia_am * e.stress
+
+    linhas = []
+    for s_i in range(n_sims):
+        z = rng.standard_normal(n)
+        x = np.empty(n)
+        x[0] = z[0]
+        for t in range(1, n):
+            x[t] = rho * x[t - 1] + np.sqrt(1 - rho ** 2) * z[t]
+        vetor = base * np.exp(vol * x - vol ** 2 / 2)
+        r = simular(e, vetor_inadimplencia=vetor)
+        for _, row in r.por_classe.iterrows():
+            linhas.append(dict(
+                sim=s_i, classe=row["classe"], tir_aa=row["tir_aa"],
+                integra=bool(row["integra"]),
+                perdeu_principal=row["recebido"] < row["aporte"] - 1.0))
+    df = pd.DataFrame(linhas)
+
+    stats = []
+    for classe, g in df.groupby("classe", sort=False):
+        tir = pd.to_numeric(g["tir_aa"], errors="coerce").dropna()
+        stats.append(dict(
+            classe=classe,
+            tir_media=tir.mean() if len(tir) else np.nan,
+            tir_p5=tir.quantile(0.05) if len(tir) else np.nan,
+            tir_p50=tir.quantile(0.50) if len(tir) else np.nan,
+            tir_p95=tir.quantile(0.95) if len(tir) else np.nan,
+            prob_nao_integral=1.0 - g["integra"].mean(),
+            prob_perda_principal=g["perdeu_principal"].mean()))
+    ordem = [c.nome for c in e.classes]
+    df_stats = (pd.DataFrame(stats).set_index("classe").loc[ordem]
+                .reset_index())
+    return df, df_stats
