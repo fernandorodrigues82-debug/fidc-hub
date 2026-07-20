@@ -3,3 +3,4 @@ pandas>=2.0
 numpy>=1.26
 plotly>=5.20
 numpy-financial>=1.0
+requests>=2.31

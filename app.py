@@ -36,12 +36,14 @@ with esq:
                     .reindex(db.ETAPAS_FUNIL, fill_value=0).reset_index())
         contagem.columns = ["Etapa", "Originadores"]
         st.bar_chart(contagem.set_index("Etapa"))
-    st.page_link("pages/1_Funil_de_Originadores.py",
+    st.page_link("pages/1_📋_Funil_de_Originadores.py",
                  label="→ Abrir funil de originadores")
-    st.page_link("pages/2_Simulador_de_Estruturacao.py",
+    st.page_link("pages/2_🧮_Simulador_de_Estruturacao.py",
                  label="→ Abrir simulador de estrutura")
-    st.page_link("pages/3_Esteira_de_Constituicao.py",
+    st.page_link("pages/3_🏗️_Esteira_de_Constituicao.py",
                  label="→ Abrir esteira de constituição")
+    st.page_link("pages/4_📖_Guia_de_Conceitos.py",
+                 label="→ Abrir guia de conceitos")
 
 with dir_:
     st.subheader("Trilha de auditoria")
