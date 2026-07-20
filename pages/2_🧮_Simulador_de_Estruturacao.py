@@ -1,3 +1,5 @@
+import json
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -76,10 +78,69 @@ if pend := st.session_state.pop("_aplicar", None):
             cdf.at[i, "Valor"] = float(pend[chave_sp])
     st.session_state["classes_df"] = cdf
 
+# carrega uma simulação salva por completo (substitui todos os campos)
+if pend_full := st.session_state.pop("_carregar_simulacao", None):
+    campos_simples = ["pl", "cdi_aa", "t_ces", "prazo", "revolv", "rampa",
+                      "carencia", "prep", "inad", "recup", "custos",
+                      "sub_min", "stress"]
+    for k in campos_simples:
+        if k in pend_full:
+            st.session_state[k] = pend_full[k]
+    if "classes_editor" in pend_full:
+        st.session_state["classes_df"] = pd.DataFrame(pend_full["classes_editor"])
+    st.session_state["sim_carregada_id"] = pend_full.get("_sim_id")
+    st.session_state["sim_carregada_nome"] = pend_full.get("_sim_nome", "")
+
 st.title("Simulador de estruturação")
 st.caption("Peça de decisão do comitê: estrutura multiclasses com pagamento "
            "sequencial por senioridade, stress de inadimplência e break-even "
            "— antes de o banco comprometer capital como cotista.")
+
+# --------------------------------------------------- originador vinculado
+origs_topo = db.listar_originadores()
+if origs_topo:
+    ids_topo = [None] + [o["id"] for o in origs_topo]
+    idx_default = 0
+    ativo = st.session_state.get("originador_ativo")
+    if ativo in ids_topo:
+        idx_default = ids_topo.index(ativo)
+    orig_ativo = st.selectbox(
+        "Originador desta simulação",
+        ids_topo, index=idx_default, key="sel_originador_topo",
+        format_func=lambda i: "— nenhum (exploração livre) —" if i is None
+        else next(o["razao_social"] for o in origs_topo if o["id"] == i))
+    st.session_state["originador_ativo"] = orig_ativo
+else:
+    orig_ativo = None
+    st.caption("Nenhum originador cadastrado ainda — cadastre um no Funil "
+              "de Originadores para poder salvar simulações vinculadas.")
+
+with st.expander("💾 Simulações salvas" +
+                 (f" — {next(o['razao_social'] for o in origs_topo if o['id'] == orig_ativo)}"
+                  if orig_ativo else ""),
+                 expanded=bool(st.session_state.get("sim_carregada_id"))):
+    if not orig_ativo:
+        st.caption("Selecione um originador acima para ver e salvar "
+                  "simulações vinculadas a ele.")
+    else:
+        sims = db.listar_simulacoes(orig_ativo)
+        if sims:
+            cl1, cl2 = st.columns([3, 1])
+            sim_sel = cl1.selectbox(
+                "Carregar simulação salva", [s["id"] for s in sims],
+                format_func=lambda i: next(
+                    f"{s['nome']} — {s['atualizado_em'][:16].replace('T', ' ')}"
+                    for s in sims if s["id"] == i))
+            if cl2.button("📂 Carregar", width="stretch"):
+                params = json.loads(next(s["parametros"] for s in sims
+                                         if s["id"] == sim_sel))
+                params["_sim_id"] = sim_sel
+                params["_sim_nome"] = next(s["nome"] for s in sims
+                                           if s["id"] == sim_sel)
+                st.session_state["_carregar_simulacao"] = params
+                st.rerun()
+        else:
+            st.caption("Nenhuma simulação salva para este originador ainda.")
 
 # ------------------------------------------------- descrever a operação
 with st.expander("✍️ Descrever a operação (a IA preenche os parâmetros)"):
@@ -249,6 +310,36 @@ st.caption("Nota interna: régua própria do banco (não é rating de "
           "agência), combinando o break-even de stress de cada classe "
           "com a probabilidade do Monte Carlo quando disponível. Ver "
           "detalhe na página 'Simulação de Retornos'.")
+
+if orig_ativo:
+    cs1, cs2 = st.columns([3, 1])
+    nome_sim = cs1.text_input(
+        "Nome desta simulação",
+        value=st.session_state.get("sim_carregada_nome", "") or
+        f"Cenário {pd.Timestamp.now().strftime('%d/%m %H:%M')}",
+        key="nome_sim_atual")
+    if cs2.button("💾 Salvar simulação", width="stretch"):
+        params_completos = dict(
+            pl=pl, cdi_aa=cdi, t_ces=round(t_ces * 100, 4), prazo=prazo,
+            revolv=revolv, rampa=rampa, carencia=carencia,
+            prep=round(prep * 100, 4), inad=round(inad * 100, 4),
+            recup=int(recup * 100), custos=round(custos * 100, 4),
+            sub_min=sub_min_pct, stress=stress,
+            classes_editor=cdf.to_dict(orient="records"),
+            classes=[{"nome": c.nome, "pct": c.pct, "taxa_am": c.taxa_am,
+                     "residual": c.residual} for c in classes])
+        resumo_sim = dict(
+            pl_total=pl, subordinacao=pct_sub / 100,
+            todas_integras=res["todas_integras"],
+            nota_senior=str(ratings.iloc[0]["nota"]) if len(ratings) else None,
+            breakeven_senior=be, retorno_sub=res["retorno_sub_multiplo"])
+        sim_id_atual = st.session_state.get("sim_carregada_id")
+        novo_id = db.salvar_simulacao(orig_ativo, nome_sim, params_completos,
+                                      resumo_sim, sim_id=sim_id_atual)
+        st.session_state["sim_carregada_id"] = novo_id
+        st.session_state["sim_carregada_nome"] = nome_sim
+        st.success(f"Simulação '{nome_sim}' salva para "
+                  f"{next(o['razao_social'] for o in origs_topo if o['id'] == orig_ativo)}.")
 
 if not res["todas_integras"]:
     piores = pc[~pc["integra"]]["classe"].tolist()
@@ -427,7 +518,9 @@ st.subheader("Aprovar estrutura e abrir esteira de constituição")
 origs = [o for o in db.listar_originadores()]
 if origs:
     ca, cb = st.columns([2, 2])
-    orig_sel = ca.selectbox("Originador", [o["id"] for o in origs],
+    ids_aprov = [o["id"] for o in origs]
+    idx_aprov = ids_aprov.index(orig_ativo) if orig_ativo in ids_aprov else 0
+    orig_sel = ca.selectbox("Originador", ids_aprov, index=idx_aprov,
                             format_func=lambda i: next(
                                 o["razao_social"] for o in origs
                                 if o["id"] == i))
@@ -488,6 +581,23 @@ if origs:
                       resumo=res)
         deal_id = db.criar_deal(orig_sel, nome_fundo, params)
         db.mover_etapa(orig_sel, "Aprovado")
+        params_completos = dict(
+            pl=pl, cdi_aa=cdi, t_ces=round(t_ces * 100, 4), prazo=prazo,
+            revolv=revolv, rampa=rampa, carencia=carencia,
+            prep=round(prep * 100, 4), inad=round(inad * 100, 4),
+            recup=int(recup * 100), custos=round(custos * 100, 4),
+            sub_min=sub_min_pct, stress=stress,
+            classes_editor=cdf.to_dict(orient="records"),
+            classes=params["classes"])
+        resumo_sim = dict(
+            pl_total=pl, subordinacao=pct_sub / 100, todas_integras=True,
+            nota_senior=str(ratings.iloc[0]["nota"]) if len(ratings) else None,
+            breakeven_senior=be, retorno_sub=res["retorno_sub_multiplo"])
+        sim_id_final = db.salvar_simulacao(
+            orig_sel, nome_fundo, params_completos, resumo_sim,
+            sim_id=st.session_state.get("sim_carregada_id"))
+        db.vincular_deal_simulacao(sim_id_final, deal_id)
+        st.session_state["sim_carregada_id"] = sim_id_final
         st.success(f"Deal #{deal_id} criado com os parâmetros desta "
                    "simulação. Acompanhe na Esteira de Constituição.")
     if not res["todas_integras"]:

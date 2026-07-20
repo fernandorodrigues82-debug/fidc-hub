@@ -46,6 +46,8 @@ with esq:
                  label="→ Abrir operação de fundos")
     st.page_link("pages/7_📊_Painel_Consolidado.py",
                  label="→ Abrir painel consolidado")
+    st.page_link("pages/8_🔗_Visao_do_Originador.py",
+                 label="→ Abrir visão integrada do originador")
     st.page_link("pages/4_📖_Guia_de_Conceitos.py",
                  label="→ Abrir guia de conceitos")
 

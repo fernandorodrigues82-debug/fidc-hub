@@ -80,6 +80,18 @@ CREATE TABLE IF NOT EXISTS cessoes (
     criado_em TEXT
 );
 
+CREATE TABLE IF NOT EXISTS simulacoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    originador_id INTEGER REFERENCES originadores(id),
+    deal_id INTEGER REFERENCES deals(id),
+    nome TEXT,
+    parametros TEXT,          -- json completo (inclui a tabela de classes
+                              -- no formato do editor, para recarregar fiel)
+    resumo TEXT,              -- json com metricas-chave para listagem rapida
+    criado_em TEXT,
+    atualizado_em TEXT
+);
+
 CREATE TABLE IF NOT EXISTS auditoria (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     quando TEXT,
@@ -286,6 +298,70 @@ def obter_calibracao(originador_id: int):
         r = c.execute("SELECT * FROM calibracoes WHERE originador_id=?",
                       (originador_id,)).fetchone()
         return dict(r) if r else None
+
+
+# ------------------------------------------------------------ simulações
+
+def salvar_simulacao(originador_id: int, nome: str, parametros: dict,
+                     resumo: dict, sim_id: int | None = None,
+                     quem: str = "usuário") -> int:
+    agora = datetime.now().isoformat(timespec="seconds")
+    with _conn() as c:
+        if sim_id:
+            c.execute(
+                "UPDATE simulacoes SET nome=?, parametros=?, resumo=?, "
+                "atualizado_em=? WHERE id=?",
+                (nome, json.dumps(parametros, ensure_ascii=False, default=str),
+                 json.dumps(resumo, ensure_ascii=False, default=str), agora,
+                 sim_id))
+            _audit(c, quem, "atualizou simulação", "simulacao", sim_id, nome)
+            return sim_id
+        cur = c.execute(
+            "INSERT INTO simulacoes (originador_id, nome, parametros, "
+            "resumo, criado_em, atualizado_em) VALUES (?,?,?,?,?,?)",
+            (originador_id, nome,
+             json.dumps(parametros, ensure_ascii=False, default=str),
+             json.dumps(resumo, ensure_ascii=False, default=str),
+             agora, agora))
+        _audit(c, quem, "salvou simulação", "simulacao", cur.lastrowid, nome)
+        return cur.lastrowid
+
+
+def listar_simulacoes(originador_id: int | None = None):
+    with _conn() as c:
+        if originador_id:
+            rows = c.execute(
+                "SELECT s.*, o.razao_social FROM simulacoes s "
+                "LEFT JOIN originadores o ON o.id = s.originador_id "
+                "WHERE s.originador_id=? ORDER BY s.atualizado_em DESC",
+                (originador_id,)).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT s.*, o.razao_social FROM simulacoes s "
+                "LEFT JOIN originadores o ON o.id = s.originador_id "
+                "ORDER BY s.atualizado_em DESC").fetchall()
+        return [dict(r) for r in rows]
+
+
+def obter_simulacao(sim_id: int):
+    with _conn() as c:
+        r = c.execute("SELECT * FROM simulacoes WHERE id=?",
+                      (sim_id,)).fetchone()
+        return dict(r) if r else None
+
+
+def vincular_deal_simulacao(sim_id: int, deal_id: int, quem: str = "usuário"):
+    with _conn() as c:
+        c.execute("UPDATE simulacoes SET deal_id=? WHERE id=?",
+                  (deal_id, sim_id))
+        _audit(c, quem, "vinculou simulação ao fundo aprovado", "simulacao",
+              sim_id, f"deal_id={deal_id}")
+
+
+def excluir_simulacao(sim_id: int, quem: str = "usuário"):
+    with _conn() as c:
+        c.execute("DELETE FROM simulacoes WHERE id=?", (sim_id,))
+        _audit(c, quem, "excluiu simulação", "simulacao", sim_id, "")
 
 
 # ------------------------------------------------------------- operação
