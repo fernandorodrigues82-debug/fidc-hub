@@ -5,6 +5,7 @@ import streamlit as st
 import db
 from engine.conceitos import ajuda
 from engine.parser_operacao import interpretar_llm, interpretar_local
+from engine.exportar import gerar_excel
 from engine.memorando import gerar_memorando
 from engine.rating import classificar_estrutura
 from engine.sensibilidade import tornado
@@ -431,22 +432,34 @@ if origs:
     orig_obj = db.obter_originador(orig_sel) or {}
     calib_memo = db.obter_calibracao(orig_sel)
 
-    cc, cd = st.columns(2)
+    cc, cd, ce = st.columns(3)
     docx_bytes = gerar_memorando(
         nome_fundo=nome_fundo, originador=orig_obj, estrutura=e,
         resumo=res, por_classe=pc, suporte=sup, calibracao=calib_memo,
         mc_stats=mc_stats_memo, ratings=ratings)
     cc.download_button(
-        "📄 Baixar memorando de comitê (Word)", data=docx_bytes,
+        "📄 Memorando (Word)", data=docx_bytes,
         file_name=f"memorando_{nome_fundo.replace(' ', '_')}.docx",
         mime="application/vnd.openxmlformats-officedocument"
              ".wordprocessingml.document",
         width="stretch")
+
+    xlsx_bytes = gerar_excel(
+        nome_fundo=nome_fundo, originador=orig_obj, estrutura=e,
+        resumo=res, por_classe=pc, fluxo=fluxo, suporte=sup,
+        ratings=ratings, mc_stats=mc_stats_memo, calibracao=calib_memo)
+    cd.download_button(
+        "📊 Fluxo completo (Excel)", data=xlsx_bytes,
+        file_name=f"fluxo_{nome_fundo.replace(' ', '_')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument"
+             ".spreadsheetml.sheet",
+        width="stretch")
+
     if mc_stats_memo is None:
-        cc.caption("💡 Rode a Simulação de Retornos para esta estrutura "
-                  "antes de gerar o memorando e incluir a distribuição de "
-                  "TIR (Monte Carlo).")
-    if cd.button("Aprovar →", width="stretch",
+        st.caption("💡 Rode a Simulação de Retornos para esta estrutura "
+                  "antes de gerar os arquivos, para incluir a distribuição "
+                  "de TIR (Monte Carlo) no memorando e no Excel.")
+    if ce.button("Aprovar →", width="stretch",
                  disabled=not res["todas_integras"]):
         params = dict(pl_total=pl, taxa_cessao_am=t_ces,
                       prazo_medio_meses=prazo, meses_revolvencia=revolv,
