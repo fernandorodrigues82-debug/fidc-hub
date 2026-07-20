@@ -65,6 +65,13 @@ if calib:
     usar_calibracao = st.checkbox(
         "Usar a volatilidade e persistência calibradas da carteira real",
         value=True)
+    st.caption(
+        "⚠️ A calibração define a **forma** da distribuição (quanto oscila "
+        "e quanto o ciclo persiste) a partir do aging observado da "
+        "carteira — não é uma perda líquida definitiva por safra madura. "
+        "O **nível** da inadimplência base continua sendo o parâmetro "
+        "'Inadimplência base' do Simulador de Estruturação, validado na "
+        "due diligence — a calibração aqui não o substitui.")
 else:
     st.caption("Nenhuma calibração de carteira encontrada para este "
               "originador. Suba a carteira dele em **Funil de Originadores "
@@ -164,6 +171,9 @@ st.caption(
     "Metodologia: a inadimplência mensal segue um processo estocástico com "
     "persistência (AR(1)) em torno da inadimplência base × stress definidos "
     "no Simulador — meses ruins tendem a vir em sequência, como em um ciclo "
-    "de crédito real, em vez de choques independentes mês a mês. Ferramenta "
-    "de apoio à decisão; não é precificação de mercado nem garantia de "
-    "retorno.")
+    "de crédito real, em vez de choques independentes mês a mês. Quando "
+    "calibrada por carteira real, a volatilidade e a persistência vêm do "
+    "aging observado por safra de vencimento (proxy, não perda líquida "
+    "definitiva); o nível da inadimplência base continua sendo o parâmetro "
+    "validado na due diligence. Ferramenta de apoio à decisão; não é "
+    "precificação de mercado nem garantia de retorno.")

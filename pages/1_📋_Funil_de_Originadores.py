@@ -189,6 +189,28 @@ with aba_carteira:
                     "volatilidade e a persistência do ciclo de crédito "
                     "usadas na Simulação de Retornos — em vez de arbitrar "
                     "no slider.")
+                with st.expander("⚠️ O que esta calibração é — e o que não é"):
+                    st.markdown(
+                        "**É uma aproximação por aging observado**, não uma "
+                        "perda líquida definitiva por safra madura. Cada "
+                        "ponto da série é '% do valor vencido naquele mês "
+                        "que está 90+ dias em atraso na data deste "
+                        "relatório' — não o resultado final de cobrança "
+                        "daquela safra (que pode recuperar parte, ou "
+                        "piorar se ainda não maturou o suficiente).\n\n"
+                        "**Serve bem para calibrar a *forma* da "
+                        "distribuição** — o quanto a inadimplência oscila "
+                        "mês a mês (volatilidade) e o quanto meses ruins "
+                        "tendem a se repetir (persistência do ciclo). "
+                        "**Não deve ser usada para fixar o *nível* "
+                        "absoluto** da inadimplência base do simulador — "
+                        "isso continua vindo da due diligence e da análise "
+                        "de carteira validada com o originador.\n\n"
+                        "Em outras palavras: confie nela para dizer *'esta "
+                        "carteira é 2x mais volátil e mais cíclica que "
+                        "aquela'*; não para dizer *'a perda esperada é "
+                        "exatamente 1,8% a.m.'* sem cruzar com outras "
+                        "fontes.")
                 if orig_cart_id is None:
                     st.info("Cadastre um originador para poder salvar a "
                             "calibração.")
