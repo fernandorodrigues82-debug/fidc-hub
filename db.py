@@ -9,6 +9,8 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
+
 DB_PATH = Path(__file__).parent / "fidc_hub.db"
 
 # ---------------------------------------------------------------- schema
@@ -54,6 +56,28 @@ CREATE TABLE IF NOT EXISTS calibracoes (
     periodo TEXT,
     serie TEXT,               -- json da série mensal (para exibir depois)
     atualizado_em TEXT
+);
+
+CREATE TABLE IF NOT EXISTS lotes_cessao (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    deal_id INTEGER REFERENCES deals(id),
+    n_titulos INTEGER,
+    valor_total REAL,
+    valor_elegivel REAL,
+    valor_rejeitado REAL,
+    criado_em TEXT
+);
+
+CREATE TABLE IF NOT EXISTS cessoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    deal_id INTEGER REFERENCES deals(id),
+    lote_id INTEGER REFERENCES lotes_cessao(id),
+    sacado TEXT,
+    valor REAL,
+    data_vencimento TEXT,
+    elegivel INTEGER,
+    motivo_inelegivel TEXT,
+    criado_em TEXT
 );
 
 CREATE TABLE IF NOT EXISTS auditoria (
@@ -116,6 +140,10 @@ def _conn():
 def init_db():
     with _conn() as c:
         c.executescript(SCHEMA)
+        try:
+            c.execute("ALTER TABLE deals ADD COLUMN criterios_operacionais TEXT")
+        except sqlite3.OperationalError:
+            pass  # coluna já existe
 
 
 def _audit(c, quem, acao, entidade, entidade_id, detalhe=""):
@@ -255,6 +283,85 @@ def obter_calibracao(originador_id: int):
         r = c.execute("SELECT * FROM calibracoes WHERE originador_id=?",
                       (originador_id,)).fetchone()
         return dict(r) if r else None
+
+
+# ------------------------------------------------------------- operação
+
+def obter_criterios(deal_id: int) -> dict:
+    from engine.operacao import DEFAULT_CRITERIOS
+    with _conn() as c:
+        r = c.execute("SELECT criterios_operacionais FROM deals WHERE id=?",
+                      (deal_id,)).fetchone()
+    if r and r["criterios_operacionais"]:
+        return {**DEFAULT_CRITERIOS, **json.loads(r["criterios_operacionais"])}
+    return dict(DEFAULT_CRITERIOS)
+
+
+def salvar_criterios(deal_id: int, criterios: dict, quem: str = "usuário"):
+    with _conn() as c:
+        c.execute("UPDATE deals SET criterios_operacionais=? WHERE id=?",
+                  (json.dumps(criterios, ensure_ascii=False), deal_id))
+        _audit(c, quem, "atualizou critérios operacionais", "deal", deal_id,
+              json.dumps(criterios, ensure_ascii=False))
+
+
+def registrar_lote(deal_id: int, df_validado, quem: str = "usuário") -> int:
+    """Grava o lote e os títulos (elegíveis e rejeitados, para trilha)."""
+    agora = datetime.now().isoformat(timespec="seconds")
+    elegiveis = df_validado[df_validado["elegivel"]]
+    with _conn() as c:
+        cur = c.execute(
+            "INSERT INTO lotes_cessao (deal_id, n_titulos, valor_total, "
+            "valor_elegivel, valor_rejeitado, criado_em) VALUES (?,?,?,?,?,?)",
+            (deal_id, len(df_validado), float(df_validado["valor"].sum()),
+             float(elegiveis["valor"].sum()),
+             float(df_validado.loc[~df_validado["elegivel"], "valor"].sum()),
+             agora))
+        lote_id = cur.lastrowid
+        for _, row in df_validado.iterrows():
+            c.execute(
+                "INSERT INTO cessoes (deal_id, lote_id, sacado, valor, "
+                "data_vencimento, elegivel, motivo_inelegivel, criado_em) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (deal_id, lote_id, row["sacado"], float(row["valor"]),
+                 str(row["data_vencimento"].date())
+                 if pd.notna(row["data_vencimento"]) else None,
+                 int(row["elegivel"]), row["motivo_inelegivel"], agora))
+        _audit(c, quem, "ingeriu lote de cessão", "deal", deal_id,
+              f"{len(df_validado)} títulos, "
+              f"R$ {elegiveis['valor'].sum():,.0f} elegíveis")
+    return lote_id
+
+
+def listar_lotes(deal_id: int):
+    with _conn() as c:
+        return [dict(r) for r in c.execute(
+            "SELECT * FROM lotes_cessao WHERE deal_id=? ORDER BY id DESC",
+            (deal_id,))]
+
+
+def carteira_ativa(deal_id: int):
+    """Todas as cessões elegíveis já ingeridas para o fundo (DataFrame)."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT sacado, valor, data_vencimento FROM cessoes "
+            "WHERE deal_id=? AND elegivel=1", (deal_id,)).fetchall()
+    return pd.DataFrame([dict(r) for r in rows],
+                        columns=["sacado", "valor", "data_vencimento"])
+
+
+def carteira_ativa_todos_deals():
+    """{deal_id: DataFrame} com a carteira ativa de todos os fundos —
+    para os alertas cruzados de concentração de sacado entre fundos."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT deal_id, sacado, valor, data_vencimento FROM cessoes "
+            "WHERE elegivel=1").fetchall()
+    df = pd.DataFrame([dict(r) for r in rows],
+                      columns=["deal_id", "sacado", "valor",
+                              "data_vencimento"])
+    return {deal_id: g.drop(columns="deal_id")
+           for deal_id, g in df.groupby("deal_id")} if not df.empty else {}
 
 
 # ---------------------------------------------------------------- seed

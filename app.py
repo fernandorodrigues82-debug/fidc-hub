@@ -42,6 +42,8 @@ with esq:
                  label="→ Abrir simulador de estrutura")
     st.page_link("pages/3_🏗️_Esteira_de_Constituicao.py",
                  label="→ Abrir esteira de constituição")
+    st.page_link("pages/6_🔄_Operacao_de_Fundos.py",
+                 label="→ Abrir operação de fundos")
     st.page_link("pages/4_📖_Guia_de_Conceitos.py",
                  label="→ Abrir guia de conceitos")
 
