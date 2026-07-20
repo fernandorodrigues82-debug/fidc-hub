@@ -1,7 +1,7 @@
 """Motor de simulação da estrutura do FIDC — N classes de cotas.
 
 Estrutura de capital genérica: lista de classes ordenadas por senioridade
-(1ª = mais sênior). A última classe é sempre a residual (subordinada/equity):
+(1ª = mais sênior). A última classe é sempre a residual (júnior/equity):
 não tem taxa-alvo e recebe o que sobra depois de todas as outras.
 
 Cascata mensal, em até quatro fases:
@@ -41,7 +41,7 @@ class Estrutura:
     classes: list = field(default_factory=lambda: [
         Classe("Sênior", 0.75, 0.011),
         Classe("Mezanino", 0.10, 0.014),
-        Classe("Subordinada", 0.15, 0.0, residual=True),
+        Classe("Júnior", 0.15, 0.0, residual=True),
     ])
     taxa_cessao_am: float = 0.022
     prazo_medio_meses: int = 3
@@ -65,7 +65,7 @@ class Estrutura:
                              "devem somar 1.0")
         if not self.classes[-1].residual:
             raise ValueError("A última classe deve ser a residual "
-                             "(subordinada).")
+                             "(júnior).")
         if self.meses_rampa and self.meses_rampa > self.meses_revolvencia:
             raise ValueError("A rampa de integralização não pode ser mais "
                              "longa que a revolvência "

@@ -71,7 +71,7 @@ def classificar_classe(breakeven_mult, prob_nao_integral=None) -> dict:
 
 
 def classificar_estrutura(estrutura, mc_stats=None) -> pd.DataFrame:
-    """Uma linha por classe não-residual. A residual (subordinada/equity)
+    """Uma linha por classe não-residual. A residual (júnior/equity)
     recebe 'NR' — mercado não costuma dar rating de crédito a equity."""
     prob_por_classe = {}
     if mc_stats is not None:

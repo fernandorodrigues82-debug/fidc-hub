@@ -10,7 +10,7 @@ st.caption("O que cada parâmetro significa, faixas típicas de mercado e como "
            "lado de cada campo do simulador e do cadastro.")
 
 GRUPOS = {
-    "Estrutura de capital": ["pl_total", "senior", "mezanino", "subordinada"],
+    "Estrutura de capital": ["pl_total", "senior", "mezanino", "junior"],
     "Taxas e retorno": ["taxa_cessao", "taxa_senior", "taxa_mezanino", "tir"],
     "Carteira e prazos": ["prazo_medio", "revolvencia", "rampa", "carencia", "prepagamento"],
     "Risco e proteção": ["inadimplencia", "recuperacao", "custos", "stress", "sub_minima"],

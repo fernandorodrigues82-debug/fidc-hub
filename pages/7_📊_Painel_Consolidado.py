@@ -121,14 +121,14 @@ for nota, g in painel.groupby(painel["nota_senior"].fillna("—")):
         hovertemplate="%{text}<br>break-even: %{x:.1f}x<br>"
                      "retorno sub: %{y:.2f}x<extra></extra>"))
 fig.update_layout(
-    title="Break-even da sênior × retorno da subordinada "
+    title="Break-even da sênior × retorno da júnior "
           "(tamanho da bolha = PL)",
     xaxis_title="Break-even sênior (x inadimplência base)",
-    yaxis_title="Retorno da subordinada (múltiplo do aporte)",
+    yaxis_title="Retorno da júnior (múltiplo do aporte)",
     height=420, legend_title="Nota sênior")
 st.plotly_chart(fig, width="stretch")
 st.caption("Quadrante ideal: canto superior direito — colchão largo na "
-          "sênior e bom retorno para quem sobe o risco na subordinada. "
+          "sênior e bom retorno para quem sobe o risco na júnior. "
           "Fundos à esquerda merecem atenção do comitê de risco.")
 
 # ------------------------------------------------------ concentração cruzada

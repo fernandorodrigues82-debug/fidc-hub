@@ -1,5 +1,5 @@
 """Análise de sensibilidade: varia cada parâmetro para cima e para baixo,
-mede o impacto no resultado (TIR da subordinada por padrão, ou o
+mede o impacto no resultado (TIR da júnior por padrão, ou o
 break-even da classe mais sênior) e ordena — o clássico "tornado chart"
 que responde "onde vale a pena negociar com o originador".
 """
@@ -35,7 +35,7 @@ def _metrica(e, alvo: str):
 
 
 def tornado(estrutura, alvo: str = "tir_sub") -> pd.DataFrame:
-    """alvo: 'tir_sub' (múltiplo de retorno da subordinada — rápido),
+    """alvo: 'tir_sub' (múltiplo de retorno da júnior — rápido),
     'perdas_pct_pl' ou 'breakeven_senior' (mais lento: cada ponto já é
     uma busca binária de stress)."""
     base = _metrica(estrutura, alvo)

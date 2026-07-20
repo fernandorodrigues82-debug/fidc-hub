@@ -212,7 +212,7 @@ if lg := st.session_state.pop("_log_parser", None):
 st.subheader("Classes de cotas")
 st.caption("Ordem = senioridade (1ª linha recebe primeiro). Adicione ou "
            "remova linhas para séries e classes extras — ex.: Sênior A, "
-           "Sênior B, Mezanino. A subordinada é o residual, calculado "
+           "Sênior B, Mezanino. A júnior é o residual, calculado "
            "automaticamente.")
 cdf = st.data_editor(
     st.session_state["classes_df"], num_rows="dynamic", width="stretch",
@@ -232,14 +232,14 @@ cdf = cdf.dropna(subset=["Classe"]).reset_index(drop=True)
 soma_pct = float(cdf["% do PL"].fillna(0).sum())
 pct_sub = round(100 - soma_pct, 2)
 m_sub1, m_sub2 = st.columns([1, 3])
-m_sub1.metric("Subordinada (residual)", f"{pct_sub:.1f}%",
-              help=ajuda("subordinada"))
+m_sub1.metric("Júnior (residual)", f"{pct_sub:.1f}%",
+              help=ajuda("junior"))
 if pct_sub <= 0:
     m_sub2.error("As classes somam ≥ 100% do PL — sobra nada para a "
-                 "subordinada. Reduza os percentuais.")
+                 "júnior. Reduza os percentuais.")
     st.stop()
 if len(cdf) == 0:
-    st.error("Inclua ao menos uma classe além da subordinada.")
+    st.error("Inclua ao menos uma classe além da júnior.")
     st.stop()
 
 # ---------------------------------------------------------------- sidebar
@@ -290,7 +290,7 @@ with st.sidebar:
 classes = [Classe(str(row["Classe"]), float(row["% do PL"]) / 100,
                   _taxa_am(row["Benchmark"], float(row["Valor"] or 0), cdi))
            for _, row in cdf.iterrows()]
-classes.append(Classe("Subordinada", pct_sub / 100, 0.0, residual=True))
+classes.append(Classe("Júnior", pct_sub / 100, 0.0, residual=True))
 
 e = Estrutura(pl_total=pl, classes=classes, taxa_cessao_am=t_ces,
               prazo_medio_meses=prazo, meses_revolvencia=revolv,
@@ -307,7 +307,7 @@ st.session_state["estrutura_atual"] = e
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Todas as classes íntegras?",
           "Sim ✅" if res["todas_integras"] else "NÃO ⚠️")
-c2.metric("Perdas totais vs subordinada", f"{res['perdas_vs_sub']*100:.0f}%")
+c2.metric("Perdas totais vs júnior", f"{res['perdas_vs_sub']*100:.0f}%")
 c3.metric("Retorno da sub (múltiplo)", f"{res['retorno_sub_multiplo']:.2f}x")
 be = stress_breakeven(e, 0)
 c4.metric(f"Break-even {classes[0].nome}",
@@ -402,7 +402,7 @@ with g2:
         fig2.add_trace(go.Bar(x=fluxo["mes"], y=fluxo[f"pago_{c.nome}"] / 1e6,
                               name=c.nome))
     fig2.add_trace(go.Bar(x=fluxo["mes"], y=fluxo["pago_residual"] / 1e6,
-                          name="Subordinada"))
+                          name="Júnior"))
     fig2.add_trace(go.Bar(x=fluxo["mes"], y=fluxo["despesas"] / 1e6,
                           name="Despesas"))
     fig2.update_layout(barmode="stack",
@@ -438,7 +438,7 @@ with g4:
                               name="Perdas acumuladas", fill="tozeroy",
                               line=dict(color="#B33A3A")))
     fig3.add_hline(y=e.pl_total * pct_sub / 100 / 1e6, line_dash="dash",
-                   annotation_text="Subordinada inicial")
+                   annotation_text="Júnior inicial")
     fig3.update_layout(
         title="Perdas acumuladas vs colchão de subordinação (R$ mi)",
         xaxis_title="Mês", height=340)
@@ -457,7 +457,7 @@ except Exception:
 st.divider()
 st.subheader("Análise de sensibilidade — onde vale a pena negociar")
 st.caption("Cada parâmetro varia -X%/+X% (a taxa de cessão, ±15%; os "
-          "demais, ±30%) e mostra o quanto move o retorno da subordinada. "
+          "demais, ±30%) e mostra o quanto move o retorno da júnior. "
           "Quanto maior a barra, mais a estrutura é sensível àquele "
           "parâmetro — é ali que uma negociação com o originador rende "
           "mais.")
@@ -482,7 +482,7 @@ else:
         customdata=tor["valor_baixo"],
         hovertemplate="%{y}: %{customdata:.4g}<extra></extra>"))
     fig_tor.update_layout(
-        title="Impacto no retorno da subordinada (pontos percentuais de "
+        title="Impacto no retorno da júnior (pontos percentuais de "
               "múltiplo sobre o aporte)",
         barmode="overlay", height=320,
         xaxis_title="Variação no retorno da sub (p.p.)",
@@ -519,7 +519,7 @@ else:
                      annotation_text="break-even sênior")
     fig_cv.update_layout(
         title="Recuperação por classe conforme o stress (% do devido; "
-              "subordinada: % do aporte)",
+              "júnior: % do aporte)",
         xaxis_title="Stress sobre a inadimplência base (x)",
         yaxis_title="%", height=380,
         legend=dict(orientation="h", y=-0.25))

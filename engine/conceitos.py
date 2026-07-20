@@ -26,14 +26,14 @@ CONCEITOS = {
     "mezanino": dict(
         titulo="Cota mezanino",
         resumo="Classe intermediária: recebe depois da sênior e antes da "
-               "subordinada. Absorve perdas que ultrapassem a subordinada.",
+               "júnior. Absorve perdas que ultrapassem a júnior.",
         faixa="0–20% do PL. Nem toda estrutura tem; é usada para 'vender' "
                "parte do risco a investidores que aceitam mais retorno.",
         efeito="Protege a sênior (entra na frente dela na absorção de perdas) "
-               "e reduz o capital que o originador precisa aportar na sub.",
+               "e reduz o capital que o originador precisa aportar na júnior.",
     ),
-    "subordinada": dict(
-        titulo="Cota subordinada (júnior)",
+    "junior": dict(
+        titulo="Cota júnior (subordinada)",
         resumo="Classe que absorve as primeiras perdas e fica com o residual "
                "(excesso de spread). Normalmente é integralizada pelo próprio "
                "originador/cedente — o 'skin in the game'.",
@@ -51,14 +51,14 @@ CONCEITOS = {
         faixa="Spreads comuns: CDI + 2% a 5% a.a. conforme risco da carteira, "
                "rating e liquidez.",
         efeito="Custo de funding da estrutura: quanto maior, mais caixa a "
-               "cascata consome antes de sobrar residual para a subordinada.",
+               "cascata consome antes de sobrar residual para a júnior.",
     ),
     "taxa_mezanino": dict(
         titulo="Taxa-alvo do mezanino",
         resumo="Remuneração da classe intermediária — sempre acima da sênior, "
                "compensando a posição pior na cascata.",
         faixa="Tipicamente CDI + 4% a 8% a.a., entre a sênior e o retorno "
-               "esperado da subordinada.",
+               "esperado da júnior.",
         efeito="Mesmo mecanismo da sênior: acumula sobre o saldo e é paga "
                "na amortização, depois da sênior.",
     ),
@@ -69,7 +69,7 @@ CONCEITOS = {
         faixa="Varia muito por ativo: duplicatas 1,5–3,5% a.m.; consignado e "
                "convênios menos; carteiras de maior risco, mais.",
         efeito="O motor do excesso de spread: taxa de cessão menos taxa-alvo "
-               "das cotas menos perdas e custos = retorno da subordinada.",
+               "das cotas menos perdas e custos = retorno da júnior.",
     ),
     "prazo_medio": dict(
         titulo="Prazo médio dos recebíveis",
