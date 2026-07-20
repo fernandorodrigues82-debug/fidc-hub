@@ -26,11 +26,14 @@ with aba_funil:
         df = pd.DataFrame(origs)
         df_view = df[["id", "razao_social", "setor", "tipo_recebivel", "etapa",
                       "volume_mensal", "inadimplencia_hist", "concentracao_top10",
+                      "pl_alvo", "meses_rampa",
                       "score", "responsavel"]].copy()
         df_view["volume_mensal"] = (df_view["volume_mensal"] / 1e6).round(1)
+        df_view["pl_alvo"] = (df_view["pl_alvo"] / 1e6).round(1)
         df_view.columns = ["ID", "Originador", "Setor", "Recebível", "Etapa",
                            "Vol. mensal (R$ mi)", "Inad. hist. (%)",
-                           "Conc. top-10 (%)", "Score", "Responsável"]
+                           "Conc. top-10 (%)", "PL alvo (R$ mi)",
+                           "Rampa (meses)", "Score", "Responsável"]
         st.dataframe(df_view, hide_index=True, width="stretch")
 
         st.subheader("Mover no funil / decidir")
@@ -104,6 +107,30 @@ with aba_novo:
                                max_value=100.0,
                                value=float(base.get("concentracao_top10") or 30.0))
         resp = c8.text_input("Responsável no banco", base.get("responsavel", ""))
+
+        st.caption("Dimensionamento do fundo — conecta a capacidade de "
+                  "originação ao tamanho do FIDC que se pretende montar "
+                  "com este cedente.")
+        c9, c10, c11 = st.columns(3)
+        pl_alvo = c9.number_input(
+            "PL alvo do fundo (R$)", min_value=0.0,
+            value=float(base.get("pl_alvo") or 0.0), step=5e6, format="%.0f",
+            help="Tamanho pretendido para o FIDC deste cedente. Deixe 0 se "
+                 "ainda não há uma referência.")
+        rampa_sugerida = round(pl_alvo / vol) if (pl_alvo and vol) else 0
+        meses_rampa = c10.number_input(
+            "Meses estimados para 100% alocado", min_value=0.0,
+            value=float(base.get("meses_rampa") or 0.0),
+            step=1.0,
+            help="Tempo que o ORIGINADOR promete/estima até a carteira do "
+                 "fundo atingir o PL alvo — compare com a referência ao "
+                 "lado antes de aceitar. Não é preenchido automaticamente "
+                 "para não sobrescrever o que você já digitou aqui.")
+        c11.metric("Rampa implícita pela capacidade",
+                  f"{rampa_sugerida} m" if rampa_sugerida else "—",
+                  help="PL alvo ÷ volume mensal originado — quanto tempo a "
+                       "capacidade atual de originação levaria para encher "
+                       "o fundo, assumindo 100% do volume cessionado.")
         notas = st.text_area("Notas de due diligence", base.get("notas", ""))
 
         if st.form_submit_button("Salvar e recalcular score"):
@@ -115,6 +142,8 @@ with aba_novo:
                              anos_operacao=anos, prazo_medio_dias=prazo,
                              inadimplencia_hist=inad, concentracao_top10=conc,
                              responsavel=resp, notas=notas,
+                             pl_alvo=pl_alvo or None,
+                             meses_rampa=meses_rampa or None,
                              etapa=base.get("etapa", "Prospecção"))
                 s = calcular_score(dados)
                 dados["score"] = s["score"]
@@ -124,6 +153,22 @@ with aba_novo:
                 st.success(f"Salvo. Score: {s['score']} — {s['veredicto']} | "
                            f"Subordinação mínima sugerida: "
                            f"{s['subordinacao_minima_sugerida']}%")
+                if pl_alvo and vol and meses_rampa:
+                    if meses_rampa < rampa_sugerida * 0.7:
+                        st.warning(
+                            f"⚠️ O prazo de rampa informado ({meses_rampa:.0f} "
+                            f"meses) é bem mais curto que o implícito pela "
+                            f"capacidade de originação atual "
+                            f"({rampa_sugerida} meses). Isso pode significar "
+                            "que o originador conta com outras fontes de "
+                            "volume, ou é uma premissa agressiva a validar "
+                            "antes do comitê — capital captado e não "
+                            "alocado gera custo de carrego para a sênior.")
+                    elif meses_rampa > rampa_sugerida * 1.3:
+                        st.info(
+                            f"Prazo de rampa informado ({meses_rampa:.0f} "
+                            f"meses) mais conservador que o implícito pela "
+                            f"capacidade ({rampa_sugerida} meses).")
 
 # ------------------------------------------------------- análise de carteira
 with aba_carteira:

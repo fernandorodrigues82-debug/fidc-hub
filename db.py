@@ -140,10 +140,13 @@ def _conn():
 def init_db():
     with _conn() as c:
         c.executescript(SCHEMA)
-        try:
-            c.execute("ALTER TABLE deals ADD COLUMN criterios_operacionais TEXT")
-        except sqlite3.OperationalError:
-            pass  # coluna já existe
+        for ddl in ("ALTER TABLE deals ADD COLUMN criterios_operacionais TEXT",
+                   "ALTER TABLE originadores ADD COLUMN pl_alvo REAL",
+                   "ALTER TABLE originadores ADD COLUMN meses_rampa REAL"):
+            try:
+                c.execute(ddl)
+            except sqlite3.OperationalError:
+                pass  # coluna já existe
 
 
 def _audit(c, quem, acao, entidade, entidade_id, detalhe=""):
@@ -161,7 +164,7 @@ CAMPOS_ORIG = [
     "razao_social", "cnpj", "setor", "tipo_recebivel", "volume_mensal",
     "anos_operacao", "inadimplencia_hist", "concentracao_top10",
     "prazo_medio_dias", "etapa", "responsavel", "notas", "score",
-    "score_detalhe",
+    "score_detalhe", "pl_alvo", "meses_rampa",
 ]
 
 
