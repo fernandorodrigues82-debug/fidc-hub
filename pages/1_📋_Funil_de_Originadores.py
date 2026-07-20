@@ -4,7 +4,9 @@ import pandas as pd
 import streamlit as st
 
 import db
+from engine.calibracao import calibrar_de_carteira
 from engine.conceitos import ajuda
+from engine.leitura_arquivos import data_br, ler_planilha, numero_br
 from engine.score import calcular_score
 
 st.set_page_config(page_title="Funil de originadores", page_icon="📋", layout="wide")
@@ -210,6 +212,15 @@ with aba_carteira:
         "declarados. Colunas esperadas: `sacado`, `valor`, `data_vencimento` "
         "(AAAA-MM-DD) e `dias_atraso` (0 = pago em dia; vazio = a vencer)."
     )
+    origs_cart = db.listar_originadores()
+    orig_cart_id = None
+    if origs_cart:
+        orig_cart_id = st.selectbox(
+            "Originador desta carteira (para salvar a calibração)",
+            [o["id"] for o in origs_cart],
+            format_func=lambda i: next(
+                o["razao_social"] for o in origs_cart if o["id"] == i),
+            key="orig_carteira")
     up = st.file_uploader("Carteira (CSV ou Excel)",
                           type=["csv", "xlsx", "xls"])
     if up:
