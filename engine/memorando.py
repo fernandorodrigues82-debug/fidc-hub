@@ -61,7 +61,8 @@ def _p(doc, texto, tamanho=10, italic=False, bold=False, cor=None):
 def gerar_memorando(*, nome_fundo: str, originador: dict, estrutura,
                     resumo: dict, por_classe, suporte: dict,
                     calibracao: dict | None = None,
-                    mc_stats=None, responsavel: str = "") -> bytes:
+                    mc_stats=None, ratings=None,
+                    responsavel: str = "") -> bytes:
     """Monta o memorando e devolve os bytes do .docx (pronto para
     st.download_button)."""
     doc = Document()
@@ -126,16 +127,25 @@ def gerar_memorando(*, nome_fundo: str, originador: dict, estrutura,
 
     # ------------------------------------------------- 3. resultado simulado
     num.titulo(doc, "Resultado da simulação (cenário determinístico)")
+    notas_por_classe = {}
+    if ratings is not None and len(ratings):
+        notas_por_classe = dict(zip(ratings["classe"], ratings["nota"]))
     cab = ["Classe", "Aporte (R$ mi)", "Recebido (R$ mi)", "TIR (a.a.)",
-          "Íntegra"]
+          "Nota interna", "Íntegra"]
     linhas = []
     for _, row in por_classe.iterrows():
         tir = row.get("tir_aa")
         tir_txt = f"{tir*100:.2f}%" if tir is not None else "—"
         linhas.append([row["classe"], f"{row['aporte']/1e6:,.1f}",
                        f"{row['recebido']/1e6:,.1f}", tir_txt,
+                       notas_por_classe.get(row["classe"], "—"),
                        "Sim" if row["integra"] else "NÃO"])
     _tabela(doc, cab, linhas)
+    if notas_por_classe:
+        _p(doc, "Nota interna: régua própria do banco (não é rating de "
+               "agência), combinando o break-even de stress de cada "
+               "classe com a probabilidade do Monte Carlo quando "
+               "disponível.", italic=True, tamanho=9)
     doc.add_paragraph()
     _p(doc, f"Perdas totais no cenário: R$ "
            f"{resumo.get('perdas_totais', 0)/1e6:,.1f} milhões "

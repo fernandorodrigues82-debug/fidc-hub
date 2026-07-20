@@ -6,6 +6,8 @@ import db
 from engine.conceitos import ajuda
 from engine.parser_operacao import interpretar_llm, interpretar_local
 from engine.memorando import gerar_memorando
+from engine.rating import classificar_estrutura
+from engine.sensibilidade import tornado
 from engine.waterfall import (Classe, Estrutura, analise_suporte,
                               curva_stress, simular, stress_breakeven)
 
@@ -220,16 +222,24 @@ c4.metric(f"Break-even {classes[0].nome}",
           f"{be}x inad. base" if be else "abaixo do base ⚠️",
           help=ajuda("stress"))
 
-tabela = pc.copy()
+with st.spinner("Calculando rating interno por classe..."):
+    ratings = classificar_estrutura(e)
+tabela = pc.merge(ratings[["classe", "nota"]], on="classe", how="left")
 tabela["TIR (a.a.)"] = tabela["tir_aa"].map(
     lambda v: f"{v*100:.2f}%" if v is not None and not pd.isna(v) else "—")
 tabela["% do PL"] = (tabela["pct"] * 100).map("{:.1f}%".format)
 tabela["Aporte (R$ mi)"] = (tabela["aporte"] / 1e6).round(1)
 tabela["Recebido (R$ mi)"] = (tabela["recebido"] / 1e6).round(1)
 tabela["Íntegra"] = tabela["integra"].map({True: "✅", False: "⚠️"})
+tabela = tabela.rename(columns={"nota": "Nota interna"})
 st.dataframe(tabela[["classe", "% do PL", "Aporte (R$ mi)",
-                     "Recebido (R$ mi)", "TIR (a.a.)", "Íntegra"]],
+                     "Recebido (R$ mi)", "TIR (a.a.)", "Nota interna",
+                     "Íntegra"]],
              hide_index=True, width="stretch")
+st.caption("Nota interna: régua própria do banco (não é rating de "
+          "agência), combinando o break-even de stress de cada classe "
+          "com a probabilidade do Monte Carlo quando disponível. Ver "
+          "detalhe na página 'Simulação de Retornos'.")
 
 if not res["todas_integras"]:
     piores = pc[~pc["integra"]]["classe"].tolist()
@@ -314,6 +324,42 @@ except Exception:
     st.caption("🎲 Abra **Simulação de Retornos** no menu para ver a "
                "distribuição de TIR desta estrutura (Monte Carlo).")
 
+# --------------------------------------------------------- sensibilidade
+st.divider()
+st.subheader("Análise de sensibilidade — onde vale a pena negociar")
+st.caption("Cada parâmetro varia -X%/+X% (a taxa de cessão, ±15%; os "
+          "demais, ±30%) e mostra o quanto move o retorno da subordinada. "
+          "Quanto maior a barra, mais a estrutura é sensível àquele "
+          "parâmetro — é ali que uma negociação com o originador rende "
+          "mais.")
+with st.spinner("Calculando sensibilidade..."):
+    tor = tornado(e, alvo="tir_sub")
+if tor.empty:
+    st.info("Não foi possível calcular a sensibilidade para esta estrutura.")
+else:
+    fig_tor = go.Figure()
+    fig_tor.add_trace(go.Bar(
+        y=tor["parametro"],
+        x=(tor["metrica_alto"] - tor["metrica_base"]) * 100,
+        orientation="h", name="Cenário otimista",
+        marker_color="#1C6B2E",
+        customdata=tor["valor_alto"],
+        hovertemplate="%{y}: %{customdata:.4g}<extra></extra>"))
+    fig_tor.add_trace(go.Bar(
+        y=tor["parametro"],
+        x=(tor["metrica_baixo"] - tor["metrica_base"]) * 100,
+        orientation="h", name="Cenário pessimista",
+        marker_color="#B33A3A",
+        customdata=tor["valor_baixo"],
+        hovertemplate="%{y}: %{customdata:.4g}<extra></extra>"))
+    fig_tor.update_layout(
+        title="Impacto no retorno da subordinada (pontos percentuais de "
+              "múltiplo sobre o aporte)",
+        barmode="overlay", height=320,
+        xaxis_title="Variação no retorno da sub (p.p.)",
+        legend=dict(orientation="h", y=-0.3))
+    st.plotly_chart(fig_tor, width="stretch")
+
 st.subheader("Suporte da estrutura — a pergunta do comitê")
 st.caption("Até quanto o fundo aguenta antes de a classe mais sênior sofrer "
            "perda, no cenário parametrizado (incluindo o gatilho, se ativo).")
@@ -389,7 +435,7 @@ if origs:
     docx_bytes = gerar_memorando(
         nome_fundo=nome_fundo, originador=orig_obj, estrutura=e,
         resumo=res, por_classe=pc, suporte=sup, calibracao=calib_memo,
-        mc_stats=mc_stats_memo)
+        mc_stats=mc_stats_memo, ratings=ratings)
     cc.download_button(
         "📄 Baixar memorando de comitê (Word)", data=docx_bytes,
         file_name=f"memorando_{nome_fundo.replace(' ', '_')}.docx",
@@ -406,6 +452,7 @@ if origs:
                       prazo_medio_meses=prazo, meses_revolvencia=revolv,
                       inadimplencia_am=inad, prepagamento_am=prep,
                       recuperacao=recup, custos_aa=custos, cdi_aa=cdi,
+                      stress=stress,
                       sub_minima=(sub_min_pct / 100) if sub_min_pct > 0 else None,
                       classes=[{"nome": c.nome, "pct": c.pct,
                                 "taxa_am": c.taxa_am,

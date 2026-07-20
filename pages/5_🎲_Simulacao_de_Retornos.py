@@ -8,6 +8,7 @@ import streamlit as st
 
 import db
 from engine.conceitos import ajuda
+from engine.rating import classificar_estrutura
 from engine.waterfall import Classe, Estrutura, montecarlo
 
 st.set_page_config(page_title="Simulação de retornos", page_icon="🎲",
@@ -121,7 +122,9 @@ st.caption(f"{len(df['sim'].unique())} cenários simulados em {dt:.1f}s.")
 
 # ------------------------------------------------------------------ resumo
 st.subheader("Retorno esperado por classe")
-tabela = stats.copy()
+with st.spinner("Calculando nota interna por classe..."):
+    ratings = classificar_estrutura(base, stats)
+tabela = stats.merge(ratings[["classe", "nota"]], on="classe", how="left")
 for col in ["tir_media", "tir_p5", "tir_p50", "tir_p95"]:
     tabela[col] = tabela[col].map(
         lambda v: f"{v*100:.2f}%" if pd.notna(v) else "—")
@@ -129,9 +132,13 @@ tabela["prob_nao_integral"] = (stats["prob_nao_integral"] * 100).map(
     "{:.1f}%".format)
 tabela["prob_perda_principal"] = (stats["prob_perda_principal"] * 100).map(
     "{:.1f}%".format)
+tabela = tabela.rename(columns={"nota": "Nota interna"})
 tabela.columns = ["Classe", "TIR média", "TIR p5 (pior 5%)", "TIR mediana",
                   "TIR p95 (melhor 5%)", "Prob. não receber 100%",
-                  "Prob. perder principal"]
+                  "Prob. perder principal", "Nota interna"]
+tabela = tabela[["Classe", "Nota interna", "TIR média", "TIR p5 (pior 5%)",
+                 "TIR mediana", "TIR p95 (melhor 5%)",
+                 "Prob. não receber 100%", "Prob. perder principal"]]
 st.dataframe(tabela, hide_index=True, width="stretch")
 st.caption("TIR p5 = pior cenário entre os 5% mais adversos simulados — "
            "referência de 'quanto posso perder' para o comitê.")

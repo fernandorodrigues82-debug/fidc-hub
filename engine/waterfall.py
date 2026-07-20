@@ -310,3 +310,23 @@ def montecarlo(e: Estrutura, n_sims: int = 500, vol: float = 0.5,
     df_stats = (pd.DataFrame(stats).set_index("classe").loc[ordem]
                 .reset_index())
     return df, df_stats
+
+
+def estrutura_de_params(params: dict) -> Estrutura:
+    """Reconstrói a Estrutura a partir do dict salvo no deal aprovado —
+    usada pelo painel consolidado e pelo rating para recalcular métricas
+    sem duplicar a definição da estrutura."""
+    classes = [Classe(c["nome"], c["pct"], c.get("taxa_am", 0.0),
+                      residual=c.get("residual", False))
+              for c in params["classes"]]
+    return Estrutura(
+        pl_total=params["pl_total"], classes=classes,
+        taxa_cessao_am=params["taxa_cessao_am"],
+        prazo_medio_meses=params["prazo_medio_meses"],
+        meses_revolvencia=params["meses_revolvencia"],
+        inadimplencia_am=params["inadimplencia_am"],
+        prepagamento_am=params.get("prepagamento_am", 0.01),
+        recuperacao=params.get("recuperacao", 0.30),
+        custos_aa=params.get("custos_aa", 0.012),
+        stress=params.get("stress", 1.0),
+        sub_minima=params.get("sub_minima"))

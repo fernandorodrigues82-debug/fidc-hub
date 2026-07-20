@@ -2,6 +2,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+import json
+
 import db
 from engine.operacao import (alertas_cruzados, calcular_pdd, enquadramento,
                              validar_lote)
@@ -39,6 +41,7 @@ aba_ingestao, aba_enquadramento, aba_pdd, aba_cruzados, aba_criterios = st.tabs(
 
 criterios = db.obter_criterios(sel)
 ativa_atual = db.carteira_ativa(sel)
+pl_fundo = json.loads(deal["parametros"]).get("pl_total", 0.0)
 
 # --------------------------------------------------------------- critérios
 with aba_criterios:
@@ -85,9 +88,7 @@ with aba_ingestao:
                 carteira_sacado = (ativa_atual.groupby("sacado")["valor"]
                                   .sum().to_dict() if not ativa_atual.empty
                                   else {})
-                valor_atual = float(ativa_atual["valor"].sum()) \
-                    if not ativa_atual.empty else 0.0
-                validado = validar_lote(lote, carteira_sacado, valor_atual,
+                validado = validar_lote(lote, carteira_sacado, pl_fundo,
                                         criterios)
                 n_ok = int(validado["elegivel"].sum())
                 v_ok = float(validado.loc[validado["elegivel"], "valor"].sum())
@@ -138,7 +139,7 @@ with aba_ingestao:
 # ----------------------------------------------------------- enquadramento
 with aba_enquadramento:
     ativa = db.carteira_ativa(sel)  # recarrega após possível ingestão
-    enq = enquadramento(ativa, criterios)
+    enq = enquadramento(ativa, criterios, pl_referencia=pl_fundo)
     if enq["carteira_total"] == 0:
         st.info("Nenhuma cessão ativa ainda — ingira um lote na aba anterior.")
     else:
@@ -159,8 +160,9 @@ with aba_enquadramento:
         st.dataframe(top, hide_index=True, width="stretch")
         st.caption(
             "Limite atual: concentração máxima de "
-            f"{criterios['concentracao_max_sacado']:.0f}% por sacado "
-            "(ajustável na aba Critérios operacionais). Este é um "
+            f"{criterios['concentracao_max_sacado']:.0f}% do PL do fundo "
+            "por sacado (ajustável na aba Critérios operacionais). Este é "
+            "um "
             "enquadramento de concentração — o acompanhamento de "
             "subordinação viva (saldo real das classes mês a mês) é um "
             "próximo passo natural, hoje coberto apenas na fase de "

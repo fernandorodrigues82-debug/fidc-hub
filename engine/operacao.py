@@ -25,17 +25,22 @@ def _dias_atraso(data_vencimento, hoje):
 
 
 def validar_lote(df: pd.DataFrame, carteira_atual_sacado: dict,
-                 valor_carteira_atual: float, criterios: dict,
+                 pl_referencia: float, criterios: dict,
                  hoje=None) -> pd.DataFrame:
     """Marca cada título do lote como elegível ou não, considerando prazo
-    máximo e concentração projetada (carteira atual + este lote)."""
+    máximo e concentração por sacado.
+
+    A concentração usa o PL comprometido do fundo como base fixa — não a
+    carteira ativa corrente. Se usássemos a carteira atual, o primeiro
+    lote de um fundo novo (carteira ainda zerada) tornaria qualquer título
+    grande "100% da carteira" e rejeitaria cessões legítimas só por causa
+    da ordem de chegada."""
     hoje = hoje or pd.Timestamp.now().normalize()
     d = df.copy()
     d["data_vencimento"] = pd.to_datetime(d["data_vencimento"], errors="coerce")
     d["prazo_dias"] = (d["data_vencimento"] - hoje).dt.days
 
-    valor_projetado = valor_carteira_atual + d["valor"].sum()
-    limite_sacado = valor_projetado * criterios["concentracao_max_sacado"] / 100
+    limite_sacado = pl_referencia * criterios["concentracao_max_sacado"] / 100
 
     motivos, elegiveis = [], []
     acumulado_lote: dict = {}
@@ -51,10 +56,10 @@ def validar_lote(df: pd.DataFrame, carteira_atual_sacado: dict,
         sacado = row["sacado"]
         exposto = (carteira_atual_sacado.get(sacado, 0)
                   + acumulado_lote.get(sacado, 0) + row["valor"])
-        if exposto > limite_sacado:
+        if limite_sacado > 0 and exposto > limite_sacado:
             motivo.append(f"concentração do sacado excederia "
                           f"{criterios['concentracao_max_sacado']:.0f}% "
-                          "da carteira")
+                          "do PL do fundo")
         ok = not motivo
         if ok:
             acumulado_lote[sacado] = acumulado_lote.get(sacado, 0) + row["valor"]
@@ -93,22 +98,24 @@ def calcular_pdd(cessoes_ativas: pd.DataFrame, regua=None, hoje=None) -> dict:
                breakdown=breakdown)
 
 
-def enquadramento(cessoes_ativas: pd.DataFrame, criterios: dict) -> dict:
+def enquadramento(cessoes_ativas: pd.DataFrame, criterios: dict,
+                  pl_referencia: float | None = None) -> dict:
     if cessoes_ativas.empty:
         return dict(carteira_total=0.0, concentracao_top10=0.0,
                    maior_sacado_pct=0.0, maior_sacado_nome=None,
                    por_sacado=pd.Series(dtype=float), enquadrado=True,
                    alertas=[])
     total = float(cessoes_ativas["valor"].sum())
+    base = pl_referencia if pl_referencia else total
     por_sacado = (cessoes_ativas.groupby("sacado")["valor"].sum()
                  .sort_values(ascending=False))
-    top10_pct = float(por_sacado.head(10).sum() / total * 100)
-    maior_pct = float(por_sacado.iloc[0] / total * 100)
+    top10_pct = float(por_sacado.head(10).sum() / base * 100)
+    maior_pct = float(por_sacado.iloc[0] / base * 100)
     alertas = []
     if maior_pct > criterios["concentracao_max_sacado"]:
         alertas.append(
             f"Maior sacado ({por_sacado.index[0]}) responde por "
-            f"{maior_pct:.1f}% da carteira, acima do limite de "
+            f"{maior_pct:.1f}% do PL do fundo, acima do limite de "
             f"{criterios['concentracao_max_sacado']:.0f}%.")
     return dict(carteira_total=total, concentracao_top10=top10_pct,
                maior_sacado_pct=maior_pct,
