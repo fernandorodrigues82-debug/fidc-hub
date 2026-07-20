@@ -39,20 +39,58 @@ with st.expander("Estrutura em uso", expanded=False):
               + (f" · gatilho sub. mín. {base.sub_minima*100:.0f}%"
                  if base.sub_minima else ""))
 
-st.subheader("Parâmetros do Monte Carlo")
+st.subheader("Calibração de volatilidade e persistência")
+origs = db.listar_originadores()
+calib = None
+orig_sel = None
+if origs:
+    default_idx = 0
+    ids = [o["id"] for o in origs]
+    if st.session_state.get("ultimo_originador_id") in ids:
+        default_idx = ids.index(st.session_state["ultimo_originador_id"])
+    orig_sel = st.selectbox(
+        "Originador (para usar a calibração real da carteira, se houver)",
+        ids, index=default_idx,
+        format_func=lambda i: next(o["razao_social"] for o in origs
+                                   if o["id"] == i))
+    calib = db.obter_calibracao(orig_sel)
+
+usar_calibracao = False
+if calib:
+    st.success(
+        f"📊 Calibração real disponível: taxa média observada "
+        f"{calib['taxa_media_am']*100:.2f}%/mês, volatilidade "
+        f"{calib['vol']}, persistência {calib['rho']} — extraída de "
+        f"{calib['n_meses']} meses ({calib['periodo']}).")
+    usar_calibracao = st.checkbox(
+        "Usar a volatilidade e persistência calibradas da carteira real",
+        value=True)
+else:
+    st.caption("Nenhuma calibração de carteira encontrada para este "
+              "originador. Suba a carteira dele em **Funil de Originadores "
+              "→ Análise de carteira** para calibrar automaticamente com "
+              "dados reais — por ora, ajuste manualmente abaixo.")
+
 c1, c2, c3 = st.columns(3)
 n_sims = c1.select_slider("Nº de cenários", [200, 500, 1000, 2000], value=500,
                           help="Mais cenários = distribuição mais precisa, "
                                "porém mais lento.")
-vol = c2.slider("Volatilidade da inadimplência", 0.2, 1.5, 0.6, step=0.1,
-                help="Dispersão mês a mês em torno da inadimplência base. "
-                     "0,3 ≈ carteira estável (ex.: consignado). 0,8–1,2 ≈ "
-                     "carteira volátil (ex.: PMEs, alta concentração).")
-rho = c3.slider("Persistência do ciclo (autocorrelação)", 0.0, 0.9, 0.6,
-                step=0.1,
-                help="Quanto meses ruins tendem a ser seguidos por meses "
-                     "ruins — captura o ciclo de crédito em vez de choques "
-                     "isolados e independentes.")
+if usar_calibracao and calib:
+    vol = calib["vol"]
+    rho = calib["rho"]
+    c2.metric("Volatilidade (calibrada)", vol)
+    c3.metric("Persistência ρ (calibrada)", rho)
+else:
+    vol = c2.slider("Volatilidade da inadimplência", 0.2, 1.5, 0.6, step=0.1,
+                    help="Dispersão mês a mês em torno da inadimplência "
+                         "base. 0,3 ≈ carteira estável (ex.: consignado). "
+                         "0,8–1,2 ≈ carteira volátil (ex.: PMEs, alta "
+                         "concentração).")
+    rho = c3.slider("Persistência do ciclo (autocorrelação)", 0.0, 0.9, 0.6,
+                    step=0.1,
+                    help="Quanto meses ruins tendem a ser seguidos por "
+                         "meses ruins — captura o ciclo de crédito em vez "
+                         "de choques isolados e independentes.")
 
 if st.button("🎲 Rodar simulação de retornos", type="primary",
             use_container_width=True):

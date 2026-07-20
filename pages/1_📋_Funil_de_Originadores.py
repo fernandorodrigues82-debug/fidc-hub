@@ -180,5 +180,41 @@ with aba_carteira:
                      .reset_index()
                      .assign(pct=lambda d: (d["valor"] / total * 100).round(2))),
                     hide_index=True, width="stretch")
+
+                st.divider()
+                st.subheader("🎲 Calibrar Monte Carlo com dados reais")
+                st.caption(
+                    "Extrai a série mensal de perda severa (títulos vencidos "
+                    "há 90+ dias, por mês de vencimento) e calibra a "
+                    "volatilidade e a persistência do ciclo de crédito "
+                    "usadas na Simulação de Retornos — em vez de arbitrar "
+                    "no slider.")
+                if orig_cart_id is None:
+                    st.info("Cadastre um originador para poder salvar a "
+                            "calibração.")
+                elif st.button("Calibrar a partir desta carteira",
+                               type="primary"):
+                    calib = calibrar_de_carteira(cart)
+                    if not calib.ok:
+                        st.error(calib.motivo)
+                    else:
+                        if calib.motivo:
+                            st.warning(calib.motivo)
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("Taxa média observada",
+                                  f"{calib.taxa_media_am*100:.2f}%/mês")
+                        m2.metric("Volatilidade calibrada", calib.vol)
+                        m3.metric("Persistência (ρ) calibrada", calib.rho)
+                        m4.metric("Meses de histórico", calib.n_meses)
+                        st.line_chart(
+                            calib.serie.set_index("mes")["taxa"] * 100)
+                        st.caption(f"Período coberto: {calib.periodo}. "
+                                  "Cada ponto = % do valor vencido naquele "
+                                  "mês que está 90+ dias em atraso.")
+                        db.salvar_calibracao(orig_cart_id, calib)
+                        st.success(
+                            "Calibração salva. Abra **Simulação de "
+                            "Retornos** e selecione este originador para "
+                            "usá-la no Monte Carlo.")
         except Exception as exc:
             st.error(f"Não foi possível ler o arquivo: {exc}")

@@ -45,6 +45,17 @@ CREATE TABLE IF NOT EXISTS deals (
     atualizado_em TEXT
 );
 
+CREATE TABLE IF NOT EXISTS calibracoes (
+    originador_id INTEGER PRIMARY KEY REFERENCES originadores(id),
+    taxa_media_am REAL,
+    vol REAL,
+    rho REAL,
+    n_meses INTEGER,
+    periodo TEXT,
+    serie TEXT,               -- json da série mensal (para exibir depois)
+    atualizado_em TEXT
+);
+
 CREATE TABLE IF NOT EXISTS auditoria (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     quando TEXT,
@@ -215,6 +226,35 @@ def listar_auditoria(limite: int = 200):
     with _conn() as c:
         return [dict(r) for r in c.execute(
             "SELECT * FROM auditoria ORDER BY id DESC LIMIT ?", (limite,))]
+
+
+# ------------------------------------------------------------ calibrações
+
+def salvar_calibracao(originador_id: int, calib, quem: str = "usuário"):
+    agora = datetime.now().isoformat(timespec="seconds")
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO calibracoes (originador_id, taxa_media_am, vol, "
+            "rho, n_meses, periodo, serie, atualizado_em) VALUES "
+            "(?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(originador_id) DO UPDATE SET "
+            "taxa_media_am=excluded.taxa_media_am, vol=excluded.vol, "
+            "rho=excluded.rho, n_meses=excluded.n_meses, "
+            "periodo=excluded.periodo, serie=excluded.serie, "
+            "atualizado_em=excluded.atualizado_em",
+            (originador_id, calib.taxa_media_am, calib.vol, calib.rho,
+             calib.n_meses, calib.periodo,
+             calib.serie.to_json(orient="records"), agora),
+        )
+        _audit(c, quem, "calibrou carteira", "originador", originador_id,
+               f"vol={calib.vol} rho={calib.rho} n_meses={calib.n_meses}")
+
+
+def obter_calibracao(originador_id: int):
+    with _conn() as c:
+        r = c.execute("SELECT * FROM calibracoes WHERE originador_id=?",
+                      (originador_id,)).fetchone()
+        return dict(r) if r else None
 
 
 # ---------------------------------------------------------------- seed

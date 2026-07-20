@@ -368,6 +368,7 @@ if origs:
                             format_func=lambda i: next(
                                 o["razao_social"] for o in origs
                                 if o["id"] == i))
+    st.session_state["ultimo_originador_id"] = orig_sel
     nome_fundo = cb.text_input("Nome do fundo",
                                value="FIDC " + next(
                                    o["razao_social"].split()[0]
