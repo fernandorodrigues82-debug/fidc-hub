@@ -110,6 +110,28 @@ if origs_topo:
         format_func=lambda i: "— nenhum (exploração livre) —" if i is None
         else next(o["razao_social"] for o in origs_topo if o["id"] == i))
     st.session_state["originador_ativo"] = orig_ativo
+
+    # ao trocar de originador (e sem simulação já carregada), traz PL alvo
+    # e rampa prometida do cadastro para os campos — só na troca, pra não
+    # brigar com valores que o usuário já tenha ajustado manualmente
+    if (orig_ativo is not None
+            and st.session_state.get("_ultimo_orig_prefill") != orig_ativo
+            and not st.session_state.get("sim_carregada_id")):
+        o_ativo = db.obter_originador(orig_ativo)
+        aplicados = []
+        if o_ativo.get("pl_alvo"):
+            st.session_state["pl"] = float(o_ativo["pl_alvo"])
+            aplicados.append(f"PL alvo R$ {o_ativo['pl_alvo']/1e6:,.0f} mi")
+        if o_ativo.get("meses_rampa"):
+            revolv_atual = int(st.session_state.get("revolv", 24))
+            st.session_state["rampa"] = min(int(o_ativo["meses_rampa"]),
+                                            revolv_atual)
+            aplicados.append(f"rampa {o_ativo['meses_rampa']:.0f} m")
+        if aplicados:
+            st.info(f"📋 Aplicado do cadastro de {o_ativo['razao_social']}: "
+                   + " · ".join(aplicados) + ". Ajuste os controles abaixo "
+                   "se quiser.")
+    st.session_state["_ultimo_orig_prefill"] = orig_ativo
 else:
     orig_ativo = None
     st.caption("Nenhum originador cadastrado ainda — cadastre um no Funil "
