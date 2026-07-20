@@ -225,6 +225,36 @@ def mover_etapa(orig_id: int, etapa: str, quem: str = "usuário"):
         _audit(c, quem, "moveu etapa", "originador", orig_id, etapa)
 
 
+def contar_vinculos_originador(orig_id: int) -> dict:
+    """Quantos deals e simulações referenciam este originador — para
+    avisar antes de uma exclusão."""
+    with _conn() as c:
+        n_deals = c.execute(
+            "SELECT COUNT(*) FROM deals WHERE originador_id=?",
+            (orig_id,)).fetchone()[0]
+        n_sims = c.execute(
+            "SELECT COUNT(*) FROM simulacoes WHERE originador_id=?",
+            (orig_id,)).fetchone()[0]
+        n_calib = c.execute(
+            "SELECT COUNT(*) FROM calibracoes WHERE originador_id=?",
+            (orig_id,)).fetchone()[0]
+    return dict(deals=n_deals, simulacoes=n_sims, calibracoes=n_calib)
+
+
+def excluir_originador(orig_id: int, quem: str = "usuário"):
+    """Remove o originador e suas simulações/calibrações. NÃO remove deals
+    já aprovados (ficam órfãos de originador, preservando o histórico do
+    fundo) — o chamador deve avisar o usuário se houver deals vinculados."""
+    with _conn() as c:
+        nome = c.execute("SELECT razao_social FROM originadores WHERE id=?",
+                         (orig_id,)).fetchone()
+        c.execute("DELETE FROM simulacoes WHERE originador_id=?", (orig_id,))
+        c.execute("DELETE FROM calibracoes WHERE originador_id=?", (orig_id,))
+        c.execute("DELETE FROM originadores WHERE id=?", (orig_id,))
+        _audit(c, quem, "excluiu originador", "originador", orig_id,
+              nome[0] if nome else "")
+
+
 # ---------------------------------------------------------------- deals
 
 def criar_deal(originador_id: int, nome_fundo: str, parametros: dict,

@@ -10,6 +10,12 @@ from engine.score import calcular_score
 st.set_page_config(page_title="Funil de originadores", page_icon="📋", layout="wide")
 db.init_db()
 
+# aplica o redirecionamento pos-salvamento ANTES de criar os widgets —
+# evita duplicar registro se o usuário clicar "Salvar" de novo em modo Novo
+if pend_id := st.session_state.pop("_pos_save_redirect", None):
+    st.session_state["modo_cadastro"] = "Editar existente"
+    st.session_state["sel_orig_editar"] = pend_id
+
 st.title("Funil de originadores")
 st.caption("Prospecção → due diligence → análise de carteira → comitê. "
            "O score de estruturabilidade orienta a decisão e as condições mínimas.")
@@ -48,6 +54,30 @@ with aba_funil:
             st.success("Etapa atualizada e registrada na auditoria.")
             st.rerun()
 
+        with st.expander("🗑️ Excluir originador (limpar duplicados/testes)"):
+            vinc = db.contar_vinculos_originador(sel)
+            st.caption(
+                f"Vínculos deste registro: {vinc['simulacoes']} "
+                f"simulação(ões), {vinc['deals']} fundo(s) aprovado(s), "
+                f"{vinc['calibracoes']} calibração(ões) de carteira.")
+            if vinc["deals"] > 0:
+                st.warning(
+                    "Este originador tem fundo(s) aprovado(s) vinculado(s). "
+                    "Excluir o originador NÃO apaga os fundos (o histórico "
+                    "da esteira/operação é preservado), mas eles ficam sem "
+                    "originador associado. Prefira excluir apenas "
+                    "originadores de teste/duplicados sem fundo aprovado.")
+            confirmar = st.checkbox(
+                f"Confirmo que quero excluir "
+                f"'{next(o['razao_social'] for o in origs if o['id'] == sel)}' "
+                "e suas simulações salvas — ação não pode ser desfeita.",
+                key=f"confirma_excluir_{sel}")
+            if st.button("Excluir definitivamente", disabled=not confirmar,
+                        type="primary"):
+                db.excluir_originador(sel)
+                st.success("Originador excluído.")
+                st.rerun()
+
         o = db.obter_originador(sel)
         if o and o.get("score_detalhe"):
             st.subheader(f"Score de estruturabilidade — {o['razao_social']}")
@@ -67,13 +97,15 @@ with aba_funil:
 # ------------------------------------------------------------------ cadastro
 with aba_novo:
     origs = db.listar_originadores()
-    modo = st.radio("Modo", ["Novo", "Editar existente"], horizontal=True)
+    modo = st.radio("Modo", ["Novo", "Editar existente"], horizontal=True,
+                    key="modo_cadastro")
     base = {}
     orig_id = None
     if modo == "Editar existente" and origs:
         orig_id = st.selectbox("Selecionar", [o["id"] for o in origs],
                                format_func=lambda i: next(
-                                   o["razao_social"] for o in origs if o["id"] == i))
+                                   o["razao_social"] for o in origs if o["id"] == i),
+                               key="sel_orig_editar")
         base = db.obter_originador(orig_id) or {}
 
     with st.form("form_orig"):
@@ -149,7 +181,8 @@ with aba_novo:
                 dados["score"] = s["score"]
                 dados["score_detalhe"] = json.dumps(s["detalhe"],
                                                     ensure_ascii=False)
-                db.salvar_originador(dados, orig_id=orig_id)
+                novo_id = db.salvar_originador(dados, orig_id=orig_id)
+                st.session_state["_pos_save_redirect"] = novo_id
                 st.success(f"Salvo. Score: {s['score']} — {s['veredicto']} | "
                            f"Subordinação mínima sugerida: "
                            f"{s['subordinacao_minima_sugerida']}%")
