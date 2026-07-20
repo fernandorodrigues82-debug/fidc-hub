@@ -151,7 +151,8 @@ def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
         fase_natural = ("revolvência" if m <= e.meses_revolvencia else
                         "carência" if m <= e.meses_revolvencia + e.meses_carencia
                         else "amortização")
-        if (gatilho_mes is None and e.sub_minima is not None
+        em_rampa = bool(e.meses_rampa and m <= e.meses_rampa)
+        if (gatilho_mes is None and e.sub_minima is not None and not em_rampa
                 and fase_natural in ("revolvência", "carência")
                 and indice_sub < e.sub_minima):
             gatilho_mes = m  # evento de avaliação: amortização antecipada
