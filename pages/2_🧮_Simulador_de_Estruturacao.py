@@ -5,6 +5,7 @@ import streamlit as st
 import db
 from engine.conceitos import ajuda
 from engine.parser_operacao import interpretar_llm, interpretar_local
+from engine.memorando import gerar_memorando
 from engine.waterfall import (Classe, Estrutura, analise_suporte,
                               curva_stress, simular, stress_breakeven)
 
@@ -363,7 +364,7 @@ st.divider()
 st.subheader("Aprovar estrutura e abrir esteira de constituição")
 origs = [o for o in db.listar_originadores()]
 if origs:
-    ca, cb, cc = st.columns([2, 2, 1])
+    ca, cb = st.columns([2, 2])
     orig_sel = ca.selectbox("Originador", [o["id"] for o in origs],
                             format_func=lambda i: next(
                                 o["razao_social"] for o in origs
@@ -373,7 +374,33 @@ if origs:
                                value="FIDC " + next(
                                    o["razao_social"].split()[0]
                                    for o in origs if o["id"] == orig_sel))
-    if cc.button("Aprovar →", width="stretch",
+
+    fp_atual = (round(pl), tuple((c.nome, round(c.pct, 4), round(c.taxa_am, 6))
+                                 for c in classes), round(t_ces, 6),
+               prazo, revolv, round(inad, 6), round(stress, 2))
+    mc_res = st.session_state.get("mc_resultado")
+    mc_fp = st.session_state.get("mc_fingerprint")
+    mc_stats_memo = mc_res[1] if mc_res and mc_fp == fp_atual else None
+
+    orig_obj = db.obter_originador(orig_sel) or {}
+    calib_memo = db.obter_calibracao(orig_sel)
+
+    cc, cd = st.columns(2)
+    docx_bytes = gerar_memorando(
+        nome_fundo=nome_fundo, originador=orig_obj, estrutura=e,
+        resumo=res, por_classe=pc, suporte=sup, calibracao=calib_memo,
+        mc_stats=mc_stats_memo)
+    cc.download_button(
+        "📄 Baixar memorando de comitê (Word)", data=docx_bytes,
+        file_name=f"memorando_{nome_fundo.replace(' ', '_')}.docx",
+        mime="application/vnd.openxmlformats-officedocument"
+             ".wordprocessingml.document",
+        width="stretch")
+    if mc_stats_memo is None:
+        cc.caption("💡 Rode a Simulação de Retornos para esta estrutura "
+                  "antes de gerar o memorando e incluir a distribuição de "
+                  "TIR (Monte Carlo).")
+    if cd.button("Aprovar →", width="stretch",
                  disabled=not res["todas_integras"]):
         params = dict(pl_total=pl, taxa_cessao_am=t_ces,
                       prazo_medio_meses=prazo, meses_revolvencia=revolv,

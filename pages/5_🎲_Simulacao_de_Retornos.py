@@ -105,6 +105,13 @@ if st.button("🎲 Rodar simulação de retornos", type="primary",
     with st.spinner(f"Simulando {n_sims} cenários de ciclo de crédito..."):
         df, stats = montecarlo(base, n_sims=n_sims, vol=vol, rho=rho)
     st.session_state["mc_resultado"] = (df, stats, time.time() - t0)
+    st.session_state["mc_fingerprint"] = (
+        round(base.pl_total), tuple((c.nome, round(c.pct, 4),
+                                     round(c.taxa_am, 6))
+                                    for c in base.classes),
+        round(base.taxa_cessao_am, 6), base.prazo_medio_meses,
+        base.meses_revolvencia, round(base.inadimplencia_am, 6),
+        round(base.stress, 2))
 
 if "mc_resultado" not in st.session_state:
     st.stop()
