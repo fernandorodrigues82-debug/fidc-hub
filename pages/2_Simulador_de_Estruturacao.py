@@ -2,6 +2,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import db
+from engine.conceitos import ajuda
 from engine.waterfall import Estrutura, simular, stress_breakeven
 
 st.set_page_config(page_title="Simulador de estruturação", page_icon="🧮",
@@ -14,35 +15,43 @@ st.caption("Peça de decisão do comitê: cascata de pagamentos, stress de "
            "comprometer capital como cotista.")
 
 with st.sidebar:
+    st.caption("📖 Dúvida em algum parâmetro? Toque no (?) de cada campo ou "
+               "abra a página **Guia de Conceitos** no menu.")
     st.header("Parâmetros da estrutura")
     pl = st.number_input("PL total (R$)", min_value=1e6, value=100e6, step=10e6,
-                         format="%.0f")
-    pct_sen = st.slider("Cota sênior (% do PL)", 40, 90, 75) / 100
-    pct_mez = st.slider("Cota mezanino (% do PL)", 0, 30, 10) / 100
+                         format="%.0f", help=ajuda("pl_total"))
+    pct_sen = st.slider("Cota sênior (% do PL)", 40, 90, 75, help=ajuda("senior")) / 100
+    pct_mez = st.slider("Cota mezanino (% do PL)", 0, 30, 10, help=ajuda("mezanino")) / 100
     if pct_sen + pct_mez >= 1:
         st.error("Sênior + mezanino deve ser menor que 100%.")
         st.stop()
-    st.metric("Subordinada (residual)", f"{(1-pct_sen-pct_mez)*100:.0f}%")
+    st.metric("Subordinada (residual)", f"{(1-pct_sen-pct_mez)*100:.0f}%",
+              help=ajuda("subordinada"))
 
     st.header("Taxas (a.m.)")
-    t_sen = st.number_input("Alvo sênior (%)", value=1.10, step=0.05) / 100
-    t_mez = st.number_input("Alvo mezanino (%)", value=1.40, step=0.05) / 100
+    t_sen = st.number_input("Alvo sênior (%)", value=1.10, step=0.05,
+                            help=ajuda("taxa_senior")) / 100
+    t_mez = st.number_input("Alvo mezanino (%)", value=1.40, step=0.05,
+                            help=ajuda("taxa_mezanino")) / 100
     t_ces = st.number_input("Taxa de cessão da carteira (%)", value=2.20,
-                            step=0.05) / 100
+                            step=0.05, help=ajuda("taxa_cessao")) / 100
 
     st.header("Carteira e prazos")
-    prazo = st.slider("Prazo médio dos recebíveis (meses)", 1, 12, 3)
-    revolv = st.slider("Revolvência (meses)", 0, 60, 24)
-    prep = st.number_input("Pré-pagamento (% a.m.)", value=1.0, step=0.5) / 100
+    prazo = st.slider("Prazo médio dos recebíveis (meses)", 1, 12, 3,
+                      help=ajuda("prazo_medio"))
+    revolv = st.slider("Revolvência (meses)", 0, 60, 24, help=ajuda("revolvencia"))
+    prep = st.number_input("Pré-pagamento (% a.m.)", value=1.0, step=0.5,
+                           help=ajuda("prepagamento")) / 100
 
     st.header("Risco")
     inad = st.number_input("Inadimplência base (% dos vencimentos/mês)",
-                           value=0.80, step=0.10) / 100
-    recup = st.slider("Recuperação de créditos vencidos (%)", 0, 80, 30) / 100
+                           value=0.80, step=0.10, help=ajuda("inadimplencia")) / 100
+    recup = st.slider("Recuperação de créditos vencidos (%)", 0, 80, 30,
+                      help=ajuda("recuperacao")) / 100
     custos = st.number_input("Custos do fundo (% PL a.a.)", value=1.20,
-                             step=0.10) / 100
+                             step=0.10, help=ajuda("custos")) / 100
     stress = st.slider("Stress sobre a inadimplência (x)", 1.0, 15.0, 1.0,
-                       step=0.5)
+                       step=0.5, help=ajuda("stress"))
 
 e = Estrutura(pl_total=pl, pct_senior=pct_sen, pct_mezanino=pct_mez,
               taxa_senior_am=t_sen, taxa_mezanino_am=t_mez,
@@ -59,12 +68,14 @@ c1.metric("Sênior íntegra?", "Sim ✅" if res["senior_integra"] else "NÃO ⚠
           delta=None if res["senior_integra"]
           else f"-R$ {res['senior_shortfall']/1e6:,.1f} mi")
 tir_s = res["tir_senior_aa"]
-c2.metric("TIR sênior (a.a.)", f"{tir_s*100:.2f}%" if tir_s else "—")
+c2.metric("TIR sênior (a.a.)", f"{tir_s*100:.2f}%" if tir_s else "—",
+          help=ajuda("tir"))
 c3.metric("Perdas totais vs subordinada",
           f"{res['perdas_vs_sub']*100:.0f}%")
 c4.metric("Retorno da sub (múltiplo)", f"{res['retorno_sub_multiplo']:.2f}x")
 be = stress_breakeven(e)
-c5.metric("Break-even sênior", f"{be}x inad. base" if be else "abaixo do base ⚠️")
+c5.metric("Break-even sênior", f"{be}x inad. base" if be else "abaixo do base ⚠️",
+          help=ajuda("stress"))
 
 if not res["senior_integra"]:
     st.error("Neste cenário a cota sênior sofre perda — a estrutura não passa "

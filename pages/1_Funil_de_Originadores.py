@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 import db
+from engine.conceitos import ajuda
 from engine.score import calcular_score
 
 st.set_page_config(page_title="Funil de originadores", page_icon="📋", layout="wide")
@@ -92,10 +93,11 @@ with aba_novo:
                               step=5e5, format="%.0f")
         anos = c4.number_input("Anos de operação", min_value=0.0,
                                value=float(base.get("anos_operacao") or 3.0))
-        prazo = c5.number_input("Prazo médio (dias)", min_value=1.0,
+        prazo = c5.number_input("Prazo médio (dias)", min_value=1.0, help=ajuda("prazo_medio"),
                                 value=float(base.get("prazo_medio_dias") or 60.0))
         c6, c7, c8 = st.columns(3)
         inad = c6.number_input("Inadimplência histórica (%)", min_value=0.0,
+                               help=ajuda("inadimplencia"),
                                value=float(base.get("inadimplencia_hist") or 2.0),
                                step=0.1)
         conc = c7.number_input("Concentração top-10 sacados (%)", min_value=0.0,
