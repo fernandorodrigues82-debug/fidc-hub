@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from engine.leitura_arquivos import data_br, numero_br
+
 MIN_MESES_OK = 6      # confiável
 MIN_MESES_MINIMO = 3  # abaixo disso, não calibra
 
@@ -47,10 +49,9 @@ def calibrar_de_carteira(cart: pd.DataFrame, limiar_dias: int = 90,
                           motivo=f"Colunas ausentes para calibrar: "
                                  f"{', '.join(sorted(faltam))}.")
 
-    df["valor"] = pd.to_numeric(df["valor"], errors="coerce")
-    df["data_vencimento"] = pd.to_datetime(df["data_vencimento"],
-                                           errors="coerce")
-    df["dias_atraso"] = pd.to_numeric(df["dias_atraso"], errors="coerce")
+    df["valor"] = numero_br(df["valor"])
+    df["data_vencimento"] = data_br(df["data_vencimento"])
+    df["dias_atraso"] = numero_br(df["dias_atraso"])
     maturados = df.dropna(subset=["valor", "data_vencimento", "dias_atraso"])
     if maturados.empty:
         return Calibracao(ok=False,

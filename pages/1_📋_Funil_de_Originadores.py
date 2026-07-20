@@ -210,19 +210,20 @@ with aba_carteira:
         "declarados. Colunas esperadas: `sacado`, `valor`, `data_vencimento` "
         "(AAAA-MM-DD) e `dias_atraso` (0 = pago em dia; vazio = a vencer)."
     )
-    up = st.file_uploader("Carteira (CSV)", type="csv")
+    up = st.file_uploader("Carteira (CSV ou Excel)",
+                          type=["csv", "xlsx", "xls"])
     if up:
         try:
-            cart = pd.read_csv(up)
-            cart.columns = [c.strip().lower() for c in cart.columns]
+            cart = ler_planilha(up)
             obrig = {"sacado", "valor", "data_vencimento"}
             faltam = obrig - set(cart.columns)
             if faltam:
-                st.error(f"Colunas ausentes: {', '.join(sorted(faltam))}")
+                st.error(f"Colunas ausentes: {', '.join(sorted(faltam))}. "
+                        f"Colunas encontradas no arquivo: "
+                        f"{', '.join(cart.columns)}")
             else:
-                cart["valor"] = pd.to_numeric(cart["valor"], errors="coerce")
-                cart["data_vencimento"] = pd.to_datetime(
-                    cart["data_vencimento"], errors="coerce")
+                cart["valor"] = numero_br(cart["valor"])
+                cart["data_vencimento"] = data_br(cart["data_vencimento"])
                 total = cart["valor"].sum()
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Títulos", f"{len(cart):,}")
@@ -234,7 +235,7 @@ with aba_carteira:
                 m4.metric("Concentração top-10", f"{top10:.1f}%")
 
                 if "dias_atraso" in cart.columns:
-                    atras = pd.to_numeric(cart["dias_atraso"], errors="coerce")
+                    atras = numero_br(cart["dias_atraso"])
                     faixas = pd.cut(
                         atras.fillna(-1),
                         bins=[-2, -0.5, 0.5, 30, 60, 90, 10_000],
@@ -318,3 +319,7 @@ with aba_carteira:
                             "usá-la no Monte Carlo.")
         except Exception as exc:
             st.error(f"Não foi possível ler o arquivo: {exc}")
+            st.caption("Dica: confira se as colunas `sacado`, `valor` e "
+                      "`data_vencimento` estão presentes (com esses nomes, "
+                      "sem acentos) — CSV com vírgula ou ponto-e-vírgula e "
+                      "Excel (.xlsx) são aceitos.")

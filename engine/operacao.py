@@ -9,6 +9,8 @@ página é aberta, sem exigir novo upload para refletir o passar do tempo.
 
 import pandas as pd
 
+from engine.leitura_arquivos import data_br
+
 DEFAULT_CRITERIOS = dict(
     concentracao_max_sacado=15.0,   # % da carteira ativa do fundo
     prazo_max_dias=120,             # prazo máximo aceito na cessão
@@ -37,7 +39,7 @@ def validar_lote(df: pd.DataFrame, carteira_atual_sacado: dict,
     da ordem de chegada."""
     hoje = hoje or pd.Timestamp.now().normalize()
     d = df.copy()
-    d["data_vencimento"] = pd.to_datetime(d["data_vencimento"], errors="coerce")
+    d["data_vencimento"] = data_br(d["data_vencimento"])
     d["prazo_dias"] = (d["data_vencimento"] - hoje).dt.days
 
     limite_sacado = pl_referencia * criterios["concentracao_max_sacado"] / 100

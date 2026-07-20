@@ -5,6 +5,7 @@ import streamlit as st
 import json
 
 import db
+from engine.leitura_arquivos import ler_planilha, numero_br
 from engine.operacao import (alertas_cruzados, calcular_pdd, enquadramento,
                              validar_lote)
 
@@ -74,17 +75,19 @@ with aba_criterios:
 # --------------------------------------------------------------- ingestão
 with aba_ingestao:
     st.write("Envie o lote de novas cessões. Colunas esperadas: `sacado`, "
-            "`valor`, `data_vencimento` (AAAA-MM-DD).")
-    up = st.file_uploader("Lote de cessão (CSV)", type="csv", key=f"up_{sel}")
+            "`valor`, `data_vencimento` (AAAA-MM-DD). CSV (vírgula ou "
+            "ponto-e-vírgula) e Excel (.xlsx) são aceitos.")
+    up = st.file_uploader("Lote de cessão (CSV ou Excel)",
+                          type=["csv", "xlsx", "xls"], key=f"up_{sel}")
     if up:
         try:
-            lote = pd.read_csv(up)
-            lote.columns = [c.strip().lower() for c in lote.columns]
+            lote = ler_planilha(up)
             faltam = {"sacado", "valor", "data_vencimento"} - set(lote.columns)
             if faltam:
-                st.error(f"Colunas ausentes: {', '.join(sorted(faltam))}")
+                st.error(f"Colunas ausentes: {', '.join(sorted(faltam))}. "
+                        f"Colunas encontradas: {', '.join(lote.columns)}")
             else:
-                lote["valor"] = pd.to_numeric(lote["valor"], errors="coerce")
+                lote["valor"] = numero_br(lote["valor"])
                 carteira_sacado = (ativa_atual.groupby("sacado")["valor"]
                                   .sum().to_dict() if not ativa_atual.empty
                                   else {})
