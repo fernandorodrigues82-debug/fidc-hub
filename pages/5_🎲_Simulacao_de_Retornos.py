@@ -159,12 +159,24 @@ for c in sel_classes:
         labels.append(c)
 
 if dados_hist:
-    fig = ff.create_distplot(dados_hist, labels, show_hist=False,
-                             show_rug=False)
-    fig.update_layout(title="Densidade da TIR anualizada por classe (%)",
-                      xaxis_title="TIR (% a.a.)", height=380,
-                      legend=dict(orientation="h", y=-0.25))
-    st.plotly_chart(fig, width="stretch")
+    try:
+        fig = ff.create_distplot(dados_hist, labels, show_hist=False,
+                                 show_rug=False)
+        fig.update_layout(title="Densidade da TIR anualizada por classe (%)",
+                          xaxis_title="TIR (% a.a.)", height=380,
+                          legend=dict(orientation="h", y=-0.25))
+        st.plotly_chart(fig, width="stretch")
+    except Exception:
+        # fallback sem dependência de scipy (create_distplot exige scipy
+        # para a densidade KDE) — histograma sobreposto cobre o mesmo papel
+        fig = go.Figure()
+        for vals, nome in zip(dados_hist, labels):
+            fig.add_trace(go.Histogram(x=vals, name=nome, opacity=0.6,
+                                       histnorm="probability density"))
+        fig.update_layout(title="Distribuição da TIR anualizada por classe (%)",
+                          xaxis_title="TIR (% a.a.)", barmode="overlay",
+                          height=380, legend=dict(orientation="h", y=-0.25))
+        st.plotly_chart(fig, width="stretch")
 else:
     st.info("As classes selecionadas tiveram retorno praticamente constante "
             "nos cenários simulados (não sofreram no stress aplicado) — "
