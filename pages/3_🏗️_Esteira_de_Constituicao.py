@@ -25,6 +25,11 @@ sel = st.selectbox(
         f"— {d['status']}" for d in deals if d["id"] == i))
 deal = next(d for d in deals if d["id"] == sel)
 checklist = json.loads(deal["checklist"])
+if not checklist:
+    st.error("Este deal está com o checklist vazio (dado inconsistente). "
+            "Abra o Simulador de Estruturação e aprove novamente a "
+            "estrutura para recriar a esteira deste fundo.")
+    st.stop()
 params = json.loads(deal["parametros"])
 
 # ------------------------------------------------------------------ progresso
