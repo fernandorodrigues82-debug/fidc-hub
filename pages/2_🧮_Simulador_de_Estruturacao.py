@@ -5,7 +5,8 @@ import streamlit as st
 import db
 from engine.conceitos import ajuda
 from engine.parser_operacao import interpretar_llm, interpretar_local
-from engine.waterfall import Classe, Estrutura, simular, stress_breakeven
+from engine.waterfall import (Classe, Estrutura, analise_suporte,
+                              curva_stress, simular, stress_breakeven)
 
 st.set_page_config(page_title="Simulador de estruturação", page_icon="🧮",
                    layout="wide")
@@ -33,7 +34,7 @@ CLASSES_PADRAO = pd.DataFrame([
      "Benchmark": "CDI + spread (a.a.)", "Valor": 6.0},
 ])
 
-DEFAULTS = dict(pl=100e6, cdi_aa=12.0, t_ces=2.20, prazo=3, revolv=24,
+DEFAULTS = dict(pl=100e6, sub_min=12.0, cdi_aa=12.0, t_ces=2.20, prazo=3, revolv=24,
                 prep=1.0, inad=0.80, recup=30, custos=1.20, stress=1.0)
 for k, v in DEFAULTS.items():
     st.session_state.setdefault(k, v)
@@ -183,6 +184,14 @@ with st.sidebar:
                                  key="custos", help=ajuda("custos")) / 100
         stress = st.slider("Stress sobre a inadimplência (x)", 1.0, 15.0,
                            step=0.5, key="stress", help=ajuda("stress"))
+        sub_min_pct = st.number_input(
+            "Subordinação mínima — gatilho (%)", min_value=0.0,
+            max_value=60.0, step=1.0, key="sub_min",
+            help="Evento de avaliação: se o índice de subordinação "
+                 "dinâmico — (ativos − dívida das classes) / ativos — cair "
+                 "abaixo deste mínimo durante a revolvência, o fundo para "
+                 "de reinvestir e amortiza antecipadamente, protegendo as "
+                 "classes por senioridade. 0 = sem gatilho.")
 
 classes = [Classe(str(row["Classe"]), float(row["% do PL"]) / 100,
                   _taxa_am(row["Benchmark"], float(row["Valor"] or 0), cdi))
@@ -192,7 +201,8 @@ classes.append(Classe("Subordinada", pct_sub / 100, 0.0, residual=True))
 e = Estrutura(pl_total=pl, classes=classes, taxa_cessao_am=t_ces,
               prazo_medio_meses=prazo, meses_revolvencia=revolv,
               inadimplencia_am=inad, prepagamento_am=prep, recuperacao=recup,
-              custos_aa=custos, stress=stress)
+              custos_aa=custos, stress=stress,
+              sub_minima=(sub_min_pct / 100) if sub_min_pct > 0 else None)
 r = simular(e)
 res = r.resumo
 pc = r.por_classe
@@ -260,15 +270,82 @@ with g2:
                        legend=dict(orientation="h", y=-0.3))
     st.plotly_chart(fig2, width="stretch")
 
-fig3 = go.Figure()
-fig3.add_trace(go.Scatter(x=fluxo["mes"], y=fluxo["perdas_acum"] / 1e6,
-                          name="Perdas acumuladas", fill="tozeroy",
-                          line=dict(color="#B33A3A")))
-fig3.add_hline(y=e.pl_total * pct_sub / 100 / 1e6, line_dash="dash",
-               annotation_text="Subordinada inicial")
-fig3.update_layout(title="Perdas acumuladas vs colchão de subordinação (R$ mi)",
-                   xaxis_title="Mês", height=300)
-st.plotly_chart(fig3, width="stretch")
+if res["gatilho_mes"]:
+    st.warning(f"⚡ Gatilho de subordinação mínima acionado no mês "
+               f"{res['gatilho_mes']}: revolvência interrompida e "
+               "amortização antecipada por senioridade neste cenário.")
+
+g3, g4 = st.columns(2)
+with g3:
+    fig_sub = go.Figure()
+    fig_sub.add_trace(go.Scatter(
+        x=fluxo["mes"], y=fluxo["indice_subordinacao"] * 100,
+        name="Índice de subordinação", line=dict(color="#0B5563")))
+    if sub_min_pct > 0:
+        fig_sub.add_hline(y=sub_min_pct, line_dash="dash", line_color="#B33A3A",
+                          annotation_text="mínimo (gatilho)")
+    if res["gatilho_mes"]:
+        fig_sub.add_vline(x=res["gatilho_mes"], line_dash="dot",
+                          annotation_text="gatilho")
+    fig_sub.update_layout(title="Índice de subordinação dinâmico (%)",
+                          xaxis_title="Mês", height=340)
+    st.plotly_chart(fig_sub, width="stretch")
+
+with g4:
+    fig3 = go.Figure()
+    fig3.add_trace(go.Scatter(x=fluxo["mes"], y=fluxo["perdas_acum"] / 1e6,
+                              name="Perdas acumuladas", fill="tozeroy",
+                              line=dict(color="#B33A3A")))
+    fig3.add_hline(y=e.pl_total * pct_sub / 100 / 1e6, line_dash="dash",
+                   annotation_text="Subordinada inicial")
+    fig3.update_layout(
+        title="Perdas acumuladas vs colchão de subordinação (R$ mi)",
+        xaxis_title="Mês", height=340)
+    st.plotly_chart(fig3, width="stretch")
+
+# ------------------------------------------- suporte da estrutura (comitê)
+st.divider()
+st.subheader("Suporte da estrutura — a pergunta do comitê")
+st.caption("Até quanto o fundo aguenta antes de a classe mais sênior sofrer "
+           "perda, no cenário parametrizado (incluindo o gatilho, se ativo).")
+with st.spinner("Varrendo cenários de stress..."):
+    sup = analise_suporte(e)
+    cv = curva_stress(e)
+if sup["breakeven_mult"] is None:
+    st.error("A classe mais sênior sofre perda já no cenário base — "
+             "não há colchão a medir. Reveja a estrutura.")
+else:
+    be_txt = (f"≥ {sup['breakeven_mult']:.0f}x"
+              if sup["breakeven_mult"] >= 29.9
+              else f"{sup['breakeven_mult']:.1f}x")
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("Suporta até", f"{be_txt} a inad. base")
+    s2.metric("Inadimplência equivalente",
+              f"{sup['inad_am_equivalente']*100:.2f}% a.m.")
+    s3.metric("Perda absorvida no limite",
+              f"R$ {sup['perda_maxima']/1e6:,.1f} mi")
+    s4.metric("Perda no limite / PL",
+              f"{sup['perda_maxima_pct_pl']*100:.1f}%")
+    fig_cv = go.Figure()
+    for c in [c.nome for c in classes]:
+        fig_cv.add_trace(go.Scatter(
+            x=cv["stress"], y=cv[f"recup_{c}"] * 100, name=c))
+    fig_cv.add_vline(x=min(sup["breakeven_mult"], float(cv["stress"].max())),
+                     line_dash="dash", line_color="#B33A3A",
+                     annotation_text="break-even sênior")
+    fig_cv.update_layout(
+        title="Recuperação por classe conforme o stress (% do devido; "
+              "subordinada: % do aporte)",
+        xaxis_title="Stress sobre a inadimplência base (x)",
+        yaxis_title="%", height=380,
+        legend=dict(orientation="h", y=-0.25))
+    st.plotly_chart(fig_cv, width="stretch")
+    st.caption("Leitura para o comitê: a estrutura suporta perder até "
+               f"R$ {sup['perda_maxima']/1e6:,.1f} mi "
+               f"({sup['perda_maxima_pct_pl']*100:.1f}% do PL) em créditos "
+               "antes de a classe mais sênior deixar de receber o prometido. "
+               "As classes intermediárias absorvem perdas na ordem inversa "
+               "de senioridade, como mostra a curva.")
 
 with st.expander("Fluxo mês a mês (dados da simulação)"):
     st.dataframe(fluxo, hide_index=True, width="stretch")
@@ -293,6 +370,7 @@ if origs:
                       prazo_medio_meses=prazo, meses_revolvencia=revolv,
                       inadimplencia_am=inad, prepagamento_am=prep,
                       recuperacao=recup, custos_aa=custos, cdi_aa=cdi,
+                      sub_minima=(sub_min_pct / 100) if sub_min_pct > 0 else None,
                       classes=[{"nome": c.nome, "pct": c.pct,
                                 "taxa_am": c.taxa_am,
                                 "residual": c.residual} for c in classes],

@@ -141,6 +141,19 @@ CONCEITOS = {
         efeito="Compare a TIR da sub com o custo de capital do originador: é "
                "o que define se a estrutura 'para em pé' para ele.",
     ),
+    "sub_minima": dict(
+        titulo="Subordinação mínima (gatilho / evento de avaliação)",
+        resumo="Índice mínimo de subordinação dinâmica — (ativos − dívida "
+               "das classes) / ativos — que o fundo deve manter. Se furar, "
+               "dispara o evento de avaliação: a revolvência para e o caixa "
+               "passa a amortizar as classes por senioridade.",
+        faixa="Regulamentos costumam fixar o mínimo um pouco abaixo da "
+              "subordinação inicial (ex.: inicial 20%, mínimo 12–15%), "
+              "dando espaço para oscilação sem disparos falsos.",
+        efeito="É a principal defesa dinâmica da sênior: interromper o "
+               "reinvestimento cedo preserva caixa e eleva drasticamente o "
+               "break-even — compare a simulação com e sem gatilho.",
+    ),
 }
 
 

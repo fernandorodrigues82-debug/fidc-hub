@@ -48,6 +48,9 @@ class Estrutura:
     recuperacao: float = 0.30
     custos_aa: float = 0.012
     stress: float = 1.0
+    sub_minima: float | None = None  # gatilho: índice mínimo de subordinação
+    # (ativos - dívida sênior/mez) / ativos. Se furar durante a revolvência,
+    # dispara evento de avaliação: para de reinvestir e amortiza antecipado.
 
     def __post_init__(self):
         soma = sum(c.pct for c in self.classes)
@@ -84,6 +87,7 @@ def simular(e: Estrutura) -> Resultado:
     carteira, caixa = e.pl_total, 0.0
     pagos = [0.0] * len(pagaveis)
     pago_residual = perdas_acum = 0.0
+    gatilho_mes = None
     linhas = []
 
     for m in range(1, n + 1):
@@ -101,7 +105,16 @@ def simular(e: Estrutura) -> Resultado:
         for i, c in enumerate(pagaveis):
             saldos[i] *= (1 + c.taxa_am)
 
-        fase = "revolvência" if m <= e.meses_revolvencia else "amortização"
+        # índice de subordinação dinâmico: colchão sobre os ativos
+        ativos = carteira + caixa
+        divida = sum(saldos)
+        indice_sub = (ativos - divida) / ativos if ativos > 1e-6 else 0.0
+        if (gatilho_mes is None and e.sub_minima is not None
+                and m <= e.meses_revolvencia and indice_sub < e.sub_minima):
+            gatilho_mes = m  # evento de avaliação: amortização antecipada
+
+        fase = ("revolvência" if m <= e.meses_revolvencia
+                and gatilho_mes is None else "amortização")
         amort = [0.0] * len(pagaveis)
         amort_res = 0.0
 
@@ -125,6 +138,7 @@ def simular(e: Estrutura) -> Resultado:
 
         linha = dict(mes=m, fase=fase, carteira=carteira, caixa=caixa,
                      perda_mes=perda - recup, perdas_acum=perdas_acum,
+                     indice_subordinacao=indice_sub,
                      pago_residual=amort_res, despesas=pago_desp)
         for i, c in enumerate(pagaveis):
             linha[f"saldo_{c.nome}"] = saldos[i]
@@ -167,6 +181,7 @@ def simular(e: Estrutura) -> Resultado:
         retorno_sub_multiplo=pago_residual / sub_inicial if sub_inicial
         else np.inf,
         todas_integras=bool(pc["integra"].all()),
+        gatilho_mes=gatilho_mes,
         meses_simulados=len(fluxo),
     )
     return Resultado(fluxo=fluxo, por_classe=pc, resumo=resumo)
@@ -193,3 +208,52 @@ def stress_breakeven(e: Estrutura, indice_classe: int = 0,
         else:
             hi = mid
     return round(lo, 2)
+
+
+def analise_suporte(e: Estrutura) -> dict:
+    """Responde à pergunta do comitê: até quanto o fundo suporta antes de a
+    classe mais sênior sofrer perda?
+
+    Devolve o break-even em três leituras equivalentes:
+    - múltiplo da inadimplência base;
+    - inadimplência mensal absoluta correspondente;
+    - perda acumulada total absorvida nesse limite (R$ e % do PL).
+    """
+    be = stress_breakeven(e, 0)
+    if be is None:
+        return dict(breakeven_mult=None)
+    e_be = Estrutura(**{**e.__dict__, "stress": be})
+    r_be = simular(e_be)
+    perdas = r_be.resumo["perdas_totais"]
+    return dict(
+        breakeven_mult=be,
+        inad_am_equivalente=e.inadimplencia_am * be,
+        perda_maxima=perdas,
+        perda_maxima_pct_pl=perdas / e.pl_total,
+        gatilho_no_limite=r_be.resumo["gatilho_mes"],
+    )
+
+
+def curva_stress(e: Estrutura, max_mult: float | None = None,
+                 pontos: int = 13) -> pd.DataFrame:
+    """Varre multiplicadores de stress e devolve, por ponto, o percentual
+    recuperado de cada classe e a perda total — base do gráfico de suporte."""
+    if max_mult is None:
+        be = stress_breakeven(e, 0)
+        max_mult = max(6.0, (be or 4.0) * 1.5)
+    linhas = []
+    for mult in np.linspace(1.0, max_mult, pontos):
+        r = simular(Estrutura(**{**e.__dict__, "stress": float(mult)}))
+        linha = dict(stress=round(float(mult), 2),
+                     perdas_pct_pl=r.resumo["perdas_totais"] / e.pl_total)
+        for _, row in r.por_classe.iterrows():
+            if row["classe"] == e.classes[-1].nome:  # residual: vs aporte
+                linha[f"recup_{row['classe']}"] = min(
+                    1.0, row["recebido"] / row["aporte"]) if row["aporte"] \
+                    else 1.0
+            else:
+                alvo = row["recebido"] + row["shortfall"]
+                linha[f"recup_{row['classe']}"] = (
+                    row["recebido"] / alvo if alvo > 0 else 1.0)
+        linhas.append(linha)
+    return pd.DataFrame(linhas)

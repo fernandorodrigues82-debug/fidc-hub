@@ -13,7 +13,7 @@ GRUPOS = {
     "Estrutura de capital": ["pl_total", "senior", "mezanino", "subordinada"],
     "Taxas e retorno": ["taxa_cessao", "taxa_senior", "taxa_mezanino", "tir"],
     "Carteira e prazos": ["prazo_medio", "revolvencia", "prepagamento"],
-    "Risco e proteção": ["inadimplencia", "recuperacao", "custos", "stress"],
+    "Risco e proteção": ["inadimplencia", "recuperacao", "custos", "stress", "sub_minima"],
 }
 
 busca = st.text_input("Buscar conceito", placeholder="ex.: subordinação, break-even, cessão")
