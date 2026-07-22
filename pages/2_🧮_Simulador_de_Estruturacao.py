@@ -296,12 +296,14 @@ with st.sidebar:
             help="Custo único de estruturação (ex.: taxa de distribuição "
                  "flat sobre a cota sênior). Não é recorrente — some aqui "
                  "o valor total em R$.")
+        custo_inicial = float(custo_inicial) if custo_inicial else 0.0
         custo_inicial_meses = st.number_input(
             "Diferir esse custo em quantos meses?", min_value=1, step=1,
             key="custo_inicial_meses",
             help="1 = todo o custo sai do caixa no mês 1. Um número maior "
                  "dilui o impacto — o custo total é o mesmo, mas o golpe "
                  "de caixa em qualquer mês individual é menor.")
+        custo_inicial_meses = int(custo_inicial_meses) if custo_inicial_meses else 1
     with st.expander("📅 Carteira e prazos", expanded=False):
         prazo_dias = st.number_input(
             "Prazo médio dos recebíveis (dias)", min_value=1, max_value=720,
@@ -324,6 +326,7 @@ with st.sidebar:
                  "o que houver — util para checar se o cronograma cabe no "
                  "prazo do fundo. 0 desativa o teto (roda até quitar "
                  "naturalmente).")
+        prazo_maximo = int(prazo_maximo) if prazo_maximo else 0
         prep = st.number_input("Pré-pagamento (% a.m.)", step=0.5, key="prep",
                                help=ajuda("prepagamento")) / 100
     with st.expander("⚠️ Risco", expanded=False):
@@ -376,8 +379,11 @@ e = Estrutura(pl_total=pl, classes=classes, taxa_cessao_am=t_ces,
               custos_aa=custos, stress=stress,
               sub_minima=(sub_min_pct / 100) if sub_min_pct > 0 else None,
               meses_rampa=rampa, meses_carencia=carencia,
-              custo_inicial=custo_inicial, custo_inicial_meses=custo_inicial_meses,
-              prazo_maximo_meses=(int(prazo_maximo) if prazo_maximo > 0 else None))
+              custo_inicial=float(custo_inicial or 0),
+              custo_inicial_meses=int(custo_inicial_meses or 1),
+              prazo_maximo_meses=(int(prazo_maximo)
+                                 if prazo_maximo and prazo_maximo > 0
+                                 else None))
 r = simular(e)
 res = r.resumo
 pc = r.por_classe
@@ -685,7 +691,9 @@ if origs:
                       sub_minima=(sub_min_pct / 100) if sub_min_pct > 0 else None,
                       custo_inicial=custo_inicial,
                       custo_inicial_meses=custo_inicial_meses,
-                      prazo_maximo_meses=(int(prazo_maximo) if prazo_maximo > 0 else None),
+                      prazo_maximo_meses=(int(prazo_maximo)
+                                         if prazo_maximo and prazo_maximo > 0
+                                         else None),
                       classes=[{"nome": c.nome, "pct": c.pct,
                                 "taxa_am": c.taxa_am,
                                 "residual": c.residual} for c in classes],
