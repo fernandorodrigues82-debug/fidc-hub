@@ -48,6 +48,8 @@ with esq:
                  label="→ Abrir painel consolidado")
     st.page_link("pages/8_🔗_Visao_do_Originador.py",
                  label="→ Abrir visão integrada do originador")
+    st.page_link("pages/9_📉_Modelagem_de_Perdas.py",
+                 label="→ Abrir modelagem de perdas (cenário único)")
     st.page_link("pages/4_📖_Guia_de_Conceitos.py",
                  label="→ Abrir guia de conceitos")
 
