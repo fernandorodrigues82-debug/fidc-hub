@@ -46,7 +46,7 @@ def tornado(estrutura, alvo: str = "tir_sub") -> pd.DataFrame:
             continue
         baixo = valor_base * (1 - delta)
         alto = valor_base * (1 + delta)
-        if campo in ("prazo_medio_meses", "meses_revolvencia"):
+        if campo == "meses_revolvencia":
             baixo, alto = max(1, round(baixo)), max(1, round(alto))
 
         e_baixo = replace(estrutura, **{campo: baixo})

@@ -44,7 +44,7 @@ class Estrutura:
         Classe("Júnior", 0.15, 0.0, residual=True),
     ])
     taxa_cessao_am: float = 0.022
-    prazo_medio_meses: int = 3
+    prazo_medio_meses: float = 3.0     # aceita fração (ex.: 40 dias = 1,33)
     meses_revolvencia: int = 24
     inadimplencia_am: float = 0.008
     prepagamento_am: float = 0.01
@@ -57,6 +57,11 @@ class Estrutura:
     meses_rampa: int = 0        # meses até 100% do PL estar chamado/investido
     meses_carencia: int = 0     # meses entre o fim da revolvência e o
     # início da amortização, sem reinvestir nem amortizar (só acumula caixa)
+    custo_inicial: float = 0.0       # custo único (R$) — ex.: taxa de distribuição
+    custo_inicial_meses: int = 1     # em quantos meses diferir esse custo
+    prazo_maximo_meses: int | None = None  # teto legal do fundo: força
+    # liquidação da carteira remanescente e paga a cascata com o que houver,
+    # mesmo que a amortização natural ainda não tivesse terminado.
 
     def __post_init__(self):
         soma = sum(c.pct for c in self.classes)
@@ -71,6 +76,8 @@ class Estrutura:
                              "longa que a revolvência "
                              f"({self.meses_rampa} > "
                              f"{self.meses_revolvencia} meses).")
+        if self.custo_inicial_meses < 1:
+            raise ValueError("custo_inicial_meses deve ser pelo menos 1.")
 
     @property
     def pct_residual(self) -> float:
@@ -87,11 +94,14 @@ class Resultado:
 def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
     """vetor_inadimplencia: opcional, taxa de perda por mês (sobrepõe a
     inadimplência base x stress — usado pelo Monte Carlo)."""
-    n = (e.meses_revolvencia + e.meses_carencia
-        + e.prazo_medio_meses * 3 + 6)
+    n_natural = int(round(e.meses_revolvencia + e.meses_carencia
+                         + e.prazo_medio_meses * 3 + 6))
+    n = min(n_natural, e.prazo_maximo_meses) if e.prazo_maximo_meses else n_natural
     d = min(0.95, e.inadimplencia_am * e.stress)
     q = 1.0 / e.prazo_medio_meses
     despesa_mensal = e.pl_total * e.custos_aa / 12.0
+    despesa_inicial_mensal = (e.custo_inicial / e.custo_inicial_meses
+                             if e.custo_inicial else 0.0)
 
     pagaveis = e.classes[:-1]          # com taxa-alvo, ordem de prioridade
     residual = e.classes[-1]
@@ -139,6 +149,10 @@ def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
 
         pago_desp = min(caixa, despesa_mensal)
         caixa -= pago_desp
+        pago_desp_inicial = 0.0
+        if despesa_inicial_mensal and m <= e.custo_inicial_meses:
+            pago_desp_inicial = min(caixa, despesa_inicial_mensal)
+            caixa -= pago_desp_inicial
 
         for i, c in enumerate(pagaveis):
             saldos[i] *= (1 + c.taxa_am)
@@ -156,20 +170,23 @@ def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
                 and fase_natural in ("revolvência", "carência")
                 and indice_sub < e.sub_minima):
             gatilho_mes = m  # evento de avaliação: amortização antecipada
-        fase = "amortização" if gatilho_mes is not None else fase_natural
+        forcar_fim = (m == n)
+        fase = ("amortização" if (gatilho_mes is not None or forcar_fim)
+               else fase_natural)
         if e.meses_rampa and m <= e.meses_rampa and fase == "revolvência":
             fase = "rampa"
 
         amort = [0.0] * len(pagaveis)
         amort_res = 0.0
 
-        if fase in ("rampa", "revolvência"):
+        if fase in ("rampa", "revolvência") and not forcar_fim:
             carteira += caixa
             caixa = 0.0
-        elif fase == "carência":
+        elif fase == "carência" and not forcar_fim:
             pass  # não reinveste nem amortiza: caixa só se acumula
-        else:  # amortização
-            if m == n:  # fim do horizonte: liquida carteira remanescente
+        else:  # amortização, ou m==n forçando liquidação (mesmo fora da
+              # fase de amortização, se o teto de prazo do fundo cortar antes)
+            if forcar_fim:  # fim do horizonte: liquida carteira remanescente
                 caixa += carteira * (1 - d_m)
                 carteira = 0.0
             for i in range(len(pagaveis)):       # sequencial por senioridade
@@ -188,7 +205,9 @@ def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
                      indice_subordinacao=indice_sub,
                      capital_chamado_mes=nova_chamada,
                      capital_chamado_acum=chamado_acum,
-                     pago_residual=amort_res, despesas=pago_desp)
+                     pago_residual=amort_res,
+                     despesas=pago_desp + pago_desp_inicial,
+                     despesa_inicial_mes=pago_desp_inicial)
         for i, c in enumerate(pagaveis):
             linha[f"saldo_{c.nome}"] = saldos[i]
             linha[f"pago_{c.nome}"] = amort[i]
@@ -334,8 +353,9 @@ def montecarlo(e: Estrutura, n_sims: int = 500, vol: float = 0.5,
     com percentis de TIR e probabilidades de perda.
     """
     rng = np.random.default_rng(seed)
-    n = (e.meses_revolvencia + e.meses_carencia
-        + e.prazo_medio_meses * 3 + 6)
+    n_natural = int(round(e.meses_revolvencia + e.meses_carencia
+                         + e.prazo_medio_meses * 3 + 6))
+    n = min(n_natural, e.prazo_maximo_meses) if e.prazo_maximo_meses else n_natural
     base = e.inadimplencia_am * e.stress
 
     linhas = []
@@ -390,4 +410,7 @@ def estrutura_de_params(params: dict) -> Estrutura:
         stress=params.get("stress", 1.0),
         sub_minima=params.get("sub_minima"),
         meses_rampa=params.get("meses_rampa", 0),
-        meses_carencia=params.get("meses_carencia", 0))
+        meses_carencia=params.get("meses_carencia", 0),
+        custo_inicial=params.get("custo_inicial", 0.0),
+        custo_inicial_meses=params.get("custo_inicial_meses", 1),
+        prazo_maximo_meses=params.get("prazo_maximo_meses"))

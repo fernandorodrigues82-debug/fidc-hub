@@ -113,8 +113,18 @@ def gerar_memorando(*, nome_fundo: str, originador: dict, estrutura,
     num.titulo(doc, "Estrutura de capital proposta")
     _p(doc, f"PL total: R$ {estrutura.pl_total/1e6:,.1f} milhões  ·  "
            f"Taxa de cessão: {estrutura.taxa_cessao_am*100:.2f}% a.m.  ·  "
-           f"Prazo médio dos recebíveis: {estrutura.prazo_medio_meses} "
-           f"mês(es)  ·  Revolvência: {estrutura.meses_revolvencia} meses")
+           f"Prazo médio dos recebíveis: "
+           f"{estrutura.prazo_medio_meses*30:.0f} dias  ·  "
+           f"Revolvência: {estrutura.meses_revolvencia} meses")
+    if estrutura.prazo_maximo_meses:
+        _p(doc, f"Prazo máximo do fundo: {estrutura.prazo_maximo_meses} "
+               "meses — se a amortização natural não terminar até lá, a "
+               "carteira remanescente é liquidada e a cascata paga com o "
+               "que houver.")
+    if estrutura.custo_inicial:
+        _p(doc, f"Custo inicial (one-off): R$ "
+               f"{estrutura.custo_inicial:,.2f}, diferido em "
+               f"{estrutura.custo_inicial_meses} mês(es).")
     if estrutura.sub_minima:
         _p(doc, f"Gatilho de subordinação mínima (evento de avaliação): "
                f"{estrutura.sub_minima*100:.0f}%.")

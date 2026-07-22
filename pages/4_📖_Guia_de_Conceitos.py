@@ -11,9 +11,12 @@ st.caption("O que cada parâmetro significa, faixas típicas de mercado e como "
 
 GRUPOS = {
     "Estrutura de capital": ["pl_total", "senior", "mezanino", "junior"],
-    "Taxas e retorno": ["taxa_cessao", "taxa_senior", "taxa_mezanino", "tir"],
-    "Carteira e prazos": ["prazo_medio", "revolvencia", "rampa", "carencia", "prepagamento"],
-    "Risco e proteção": ["inadimplencia", "recuperacao", "custos", "stress", "sub_minima"],
+    "Taxas e retorno": ["taxa_cessao", "taxa_senior", "taxa_mezanino", "tir",
+                       "ajuste_curva"],
+    "Carteira e prazos": ["prazo_medio", "revolvencia", "rampa", "carencia",
+                         "prazo_maximo", "prepagamento"],
+    "Risco e proteção": ["inadimplencia", "recuperacao", "custos",
+                        "custo_inicial", "stress", "sub_minima"],
 }
 
 busca = st.text_input("Buscar conceito", placeholder="ex.: subordinação, break-even, cessão")

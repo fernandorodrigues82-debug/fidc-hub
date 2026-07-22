@@ -22,15 +22,26 @@ BENCHMARKS = ["CDI + spread (a.a.)", "% do CDI", "Prefixado (a.a.)",
               "Fixa (a.m.)"]
 
 
-def _taxa_am(benchmark: str, valor: float, cdi_aa: float) -> float:
-    cdi_am = (1 + cdi_aa / 100) ** (1 / 12) - 1
+def _taxa_am(benchmark: str, valor: float, cdi_aa: float,
+            ajuste_curva: float = 0.0) -> float:
+    """ajuste_curva: prêmio/desconto (p.p. aa) sobre o CDI projetado, para
+    aproximar a taxa efetiva da curva de mercado real (DI futuro) em vez de
+    assumir CDI flat — só se aplica aos benchmarks atrelados a CDI."""
+    cdi_efetivo = cdi_aa + ajuste_curva
+    cdi_am = (1 + cdi_efetivo / 100) ** (1 / 12) - 1
     if benchmark == "CDI + spread (a.a.)":
-        return (1 + (cdi_aa + valor) / 100) ** (1 / 12) - 1
+        return (1 + (cdi_efetivo + valor) / 100) ** (1 / 12) - 1
     if benchmark == "% do CDI":
         return cdi_am * valor / 100
     if benchmark == "Prefixado (a.a.)":
         return (1 + valor / 100) ** (1 / 12) - 1
     return valor / 100  # Fixa (a.m.)
+
+
+def _taxa_aa_equivalente(taxa_am: float) -> float:
+    """Converte uma taxa mensal de volta para a anual equivalente — usado
+    para mostrar o 'pré equivalente' de benchmarks atrelados a CDI."""
+    return (1 + taxa_am) ** 12 - 1
 
 
 CLASSES_PADRAO = pd.DataFrame([
@@ -40,8 +51,10 @@ CLASSES_PADRAO = pd.DataFrame([
      "Benchmark": "CDI + spread (a.a.)", "Valor": 6.0},
 ])
 
-DEFAULTS = dict(pl=100e6, sub_min=12.0, cdi_aa=12.0, t_ces=2.20, prazo=3, revolv=24,
-                rampa=0, carencia=0,
+DEFAULTS = dict(pl=100e6, sub_min=12.0, cdi_aa=12.0, ajuste_curva=0.0,
+                t_ces=2.20, modo_cessao="Taxa fixa (% a.m.)",
+                prazo_dias=90, revolv=24, rampa=0, carencia=0,
+                custo_inicial=0.0, custo_inicial_meses=1, prazo_maximo=0,
                 prep=1.0, inad=0.80, recup=30, custos=1.20, stress=1.0)
 for k, v in DEFAULTS.items():
     st.session_state.setdefault(k, v)
@@ -52,7 +65,7 @@ if "classes_df" not in st.session_state:
 if pend := st.session_state.pop("_aplicar", None):
     simples = {"pl_total": ("pl", float), "cdi_aa": ("cdi_aa", float),
                "taxa_cessao_am": ("t_ces", lambda v: round(v * 100, 2)),
-               "prazo_medio_meses": ("prazo", int),
+               "prazo_medio_meses": ("prazo_dias", lambda v: round(v * 30)),
                "meses_revolvencia": ("revolv", int),
                "inadimplencia_am_pct": ("inad", float)}
     for origem, (chave, conv) in simples.items():
@@ -80,9 +93,10 @@ if pend := st.session_state.pop("_aplicar", None):
 
 # carrega uma simulação salva por completo (substitui todos os campos)
 if pend_full := st.session_state.pop("_carregar_simulacao", None):
-    campos_simples = ["pl", "cdi_aa", "t_ces", "prazo", "revolv", "rampa",
-                      "carencia", "prep", "inad", "recup", "custos",
-                      "sub_min", "stress"]
+    campos_simples = ["pl", "cdi_aa", "ajuste_curva", "t_ces", "modo_cessao",
+                      "prazo_dias", "revolv", "rampa", "carencia",
+                      "custo_inicial", "custo_inicial_meses", "prazo_maximo",
+                      "prep", "inad", "recup", "custos", "sub_min", "stress"]
     for k in campos_simples:
         if k in pend_full:
             st.session_state[k] = pend_full[k]
@@ -252,12 +266,47 @@ with st.sidebar:
         cdi = st.number_input("CDI projetado (% a.a.)", min_value=0.0,
                               step=0.25, key="cdi_aa",
                               help="Usado nos benchmarks CDI+ e % do CDI.")
-        t_ces = st.number_input("Taxa de cessão da carteira (% a.m.)",
-                                step=0.05, key="t_ces",
-                                help=ajuda("taxa_cessao")) / 100
+        ajuste_curva = st.number_input(
+            "Ajuste de curva (p.p. aa)", step=0.10, key="ajuste_curva",
+            help="Opcional: some (ou subtraia) sobre o CDI projetado para "
+                 "aproximar a curva de juros futura real de mercado (DI "
+                 "futuro), em vez de assumir CDI constante. Ex.: se o "
+                 "mercado precifica queda de juros no prazo do fundo, use "
+                 "um valor negativo. 0 = usa o CDI projetado direto (flat).")
+        modo_cessao = st.radio(
+            "Como informar a taxa de cessão?",
+            ["Taxa fixa (% a.m.)", "CDI + spread (a.a.)"],
+            key="modo_cessao", horizontal=True)
+        if modo_cessao == "CDI + spread (a.a.)":
+            spread_cessao = st.number_input(
+                "Cessão: CDI + (% a.a.)", step=0.25, key="spread_cessao",
+                help="Ex.: regra 'maior entre CDI+X e PDD+despesas' — "
+                     "informe o X vencedor aqui.")
+            t_ces = _taxa_am("CDI + spread (a.a.)", spread_cessao, cdi,
+                            ajuste_curva)
+            st.caption(f"≈ {t_ces*100:.3f}% a.m. · "
+                      f"{_taxa_aa_equivalente(t_ces)*100:.2f}% aa equivalente")
+        else:
+            t_ces = st.number_input("Taxa de cessão da carteira (% a.m.)",
+                                    step=0.05, key="t_ces",
+                                    help=ajuda("taxa_cessao")) / 100
+        custo_inicial = st.number_input(
+            "Custo inicial one-off (R$)", min_value=0.0, step=5000.0,
+            key="custo_inicial",
+            help="Custo único de estruturação (ex.: taxa de distribuição "
+                 "flat sobre a cota sênior). Não é recorrente — some aqui "
+                 "o valor total em R$.")
+        custo_inicial_meses = st.number_input(
+            "Diferir esse custo em quantos meses?", min_value=1, step=1,
+            key="custo_inicial_meses",
+            help="1 = todo o custo sai do caixa no mês 1. Um número maior "
+                 "dilui o impacto — o custo total é o mesmo, mas o golpe "
+                 "de caixa em qualquer mês individual é menor.")
     with st.expander("📅 Carteira e prazos", expanded=False):
-        prazo = st.slider("Prazo médio dos recebíveis (meses)", 1, 12,
-                          key="prazo", help=ajuda("prazo_medio"))
+        prazo_dias = st.number_input(
+            "Prazo médio dos recebíveis (dias)", min_value=1, max_value=720,
+            step=5, key="prazo_dias", help=ajuda("prazo_medio"))
+        st.caption(f"≈ {prazo_dias/30:.2f} meses")
         revolv = st.slider("Revolvência (meses)", 0, 60, key="revolv",
                            help=ajuda("revolvencia"))
         st.session_state["rampa"] = min(st.session_state.get("rampa", 0), revolv)
@@ -266,6 +315,15 @@ with st.sidebar:
             key="rampa", help=ajuda("rampa"))
         carencia = st.slider("Carência antes da amortização (meses)", 0, 24,
                              key="carencia", help=ajuda("carencia"))
+        prazo_maximo = st.number_input(
+            "Prazo máximo do fundo (meses) — 0 = sem teto", min_value=0,
+            step=1, key="prazo_maximo",
+            help="Teto legal de duração do fundo. Se a amortização natural "
+                 "ainda não tiver terminado nesse mês, o motor força a "
+                 "liquidação da carteira remanescente e paga a cascata com "
+                 "o que houver — util para checar se o cronograma cabe no "
+                 "prazo do fundo. 0 desativa o teto (roda até quitar "
+                 "naturalmente).")
         prep = st.number_input("Pré-pagamento (% a.m.)", step=0.5, key="prep",
                                help=ajuda("prepagamento")) / 100
     with st.expander("⚠️ Risco", expanded=False):
@@ -288,16 +346,38 @@ with st.sidebar:
                  "classes por senioridade. 0 = sem gatilho.")
 
 classes = [Classe(str(row["Classe"]), float(row["% do PL"]) / 100,
-                  _taxa_am(row["Benchmark"], float(row["Valor"] or 0), cdi))
+                  _taxa_am(row["Benchmark"], float(row["Valor"] or 0), cdi,
+                          ajuste_curva))
            for _, row in cdf.iterrows()]
 classes.append(Classe("Júnior", pct_sub / 100, 0.0, residual=True))
 
+with st.expander("📐 Pré equivalente por classe (dado o CDI acima)",
+                 expanded=False):
+    linhas_pre = []
+    for _, row in cdf.iterrows():
+        if row["Benchmark"] in ("CDI + spread (a.a.)", "% do CDI"):
+            ta = _taxa_am(row["Benchmark"], float(row["Valor"] or 0), cdi,
+                         ajuste_curva)
+            linhas_pre.append((row["Classe"], f"{_taxa_aa_equivalente(ta)*100:.2f}% aa"))
+    if linhas_pre:
+        for nome, pre in linhas_pre:
+            st.caption(f"**{nome}**: ≈ {pre} pré-equivalente")
+    else:
+        st.caption("Nenhuma classe usa benchmark atrelado a CDI no momento.")
+    st.caption("Cálculo aproximado assumindo o CDI (+ ajuste de curva) "
+              "constante ao longo do prazo — não é uma curva de mercado "
+              "real (DI futuro) importada automaticamente. Use o campo "
+              "'Ajuste de curva' acima para calibrar manualmente com dados "
+              "da sua mesa, se tiver.")
+
 e = Estrutura(pl_total=pl, classes=classes, taxa_cessao_am=t_ces,
-              prazo_medio_meses=prazo, meses_revolvencia=revolv,
+              prazo_medio_meses=prazo_dias / 30, meses_revolvencia=revolv,
               inadimplencia_am=inad, prepagamento_am=prep, recuperacao=recup,
               custos_aa=custos, stress=stress,
               sub_minima=(sub_min_pct / 100) if sub_min_pct > 0 else None,
-              meses_rampa=rampa, meses_carencia=carencia)
+              meses_rampa=rampa, meses_carencia=carencia,
+              custo_inicial=custo_inicial, custo_inicial_meses=custo_inicial_meses,
+              prazo_maximo_meses=(int(prazo_maximo) if prazo_maximo > 0 else None))
 r = simular(e)
 res = r.resumo
 pc = r.por_classe
@@ -342,8 +422,12 @@ if orig_ativo:
         key="nome_sim_atual")
     if cs2.button("💾 Salvar simulação", width="stretch"):
         params_completos = dict(
-            pl=pl, cdi_aa=cdi, t_ces=round(t_ces * 100, 4), prazo=prazo,
-            revolv=revolv, rampa=rampa, carencia=carencia,
+            pl=pl, cdi_aa=cdi, ajuste_curva=ajuste_curva,
+            t_ces=round(t_ces * 100, 4), modo_cessao=modo_cessao,
+            prazo_dias=prazo_dias, revolv=revolv, rampa=rampa,
+            carencia=carencia, custo_inicial=custo_inicial,
+            custo_inicial_meses=custo_inicial_meses,
+            prazo_maximo=prazo_maximo,
             prep=round(prep * 100, 4), inad=round(inad * 100, 4),
             recup=int(recup * 100), custos=round(custos * 100, 4),
             sub_min=sub_min_pct, stress=stress,
@@ -554,7 +638,9 @@ if origs:
 
     fp_atual = (round(pl), tuple((c.nome, round(c.pct, 4), round(c.taxa_am, 6))
                                  for c in classes), round(t_ces, 6),
-               prazo, revolv, rampa, carencia, round(inad, 6), round(stress, 2))
+               prazo_dias, revolv, rampa, carencia, round(inad, 6),
+               round(stress, 2), round(custo_inicial, 2), custo_inicial_meses,
+               prazo_maximo)
     mc_res = st.session_state.get("mc_resultado")
     mc_fp = st.session_state.get("mc_fingerprint")
     mc_stats_memo = mc_res[1] if mc_res and mc_fp == fp_atual else None
@@ -592,11 +678,14 @@ if origs:
     if ce.button("Aprovar →", width="stretch",
                  disabled=not res["todas_integras"]):
         params = dict(pl_total=pl, taxa_cessao_am=t_ces,
-                      prazo_medio_meses=prazo, meses_revolvencia=revolv,
+                      prazo_medio_meses=prazo_dias / 30, meses_revolvencia=revolv,
                       inadimplencia_am=inad, prepagamento_am=prep,
                       recuperacao=recup, custos_aa=custos, cdi_aa=cdi,
                       stress=stress, meses_rampa=rampa, meses_carencia=carencia,
                       sub_minima=(sub_min_pct / 100) if sub_min_pct > 0 else None,
+                      custo_inicial=custo_inicial,
+                      custo_inicial_meses=custo_inicial_meses,
+                      prazo_maximo_meses=(int(prazo_maximo) if prazo_maximo > 0 else None),
                       classes=[{"nome": c.nome, "pct": c.pct,
                                 "taxa_am": c.taxa_am,
                                 "residual": c.residual} for c in classes],
@@ -604,8 +693,12 @@ if origs:
         deal_id = db.criar_deal(orig_sel, nome_fundo, params)
         db.mover_etapa(orig_sel, "Aprovado")
         params_completos = dict(
-            pl=pl, cdi_aa=cdi, t_ces=round(t_ces * 100, 4), prazo=prazo,
-            revolv=revolv, rampa=rampa, carencia=carencia,
+            pl=pl, cdi_aa=cdi, ajuste_curva=ajuste_curva,
+            t_ces=round(t_ces * 100, 4), modo_cessao=modo_cessao,
+            prazo_dias=prazo_dias, revolv=revolv, rampa=rampa,
+            carencia=carencia, custo_inicial=custo_inicial,
+            custo_inicial_meses=custo_inicial_meses,
+            prazo_maximo=prazo_maximo,
             prep=round(prep * 100, 4), inad=round(inad * 100, 4),
             recup=int(recup * 100), custos=round(custos * 100, 4),
             sub_min=sub_min_pct, stress=stress,

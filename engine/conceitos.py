@@ -182,6 +182,47 @@ CONCEITOS = {
                "alvo, que continua acumulando sobre o saldo das classes "
                "durante toda a carência.",
     ),
+    "custo_inicial": dict(
+        titulo="Custo inicial one-off",
+        resumo="Custo único de estruturação — por exemplo, uma taxa de "
+               "distribuição flat cobrada sobre o valor integralizado da "
+               "cota sênior. Diferente dos custos recorrentes (gestão, "
+               "custódia), sai do caixa uma vez só (ou diferido em alguns "
+               "meses), não todo mês pelo prazo do fundo.",
+        faixa="Taxas de distribuição costumam ficar entre 0,3% e 1,0% flat "
+              "sobre o valor da(s) classe(s) distribuída(s).",
+        efeito="Reduz o caixa disponível justamente nos primeiros meses, "
+               "quando o fundo ainda está formando a carteira — diferir "
+               "esse custo em mais meses suaviza o golpe de caixa em "
+               "qualquer mês individual, sem mudar o custo total.",
+    ),
+    "prazo_maximo": dict(
+        titulo="Prazo máximo do fundo",
+        resumo="Teto legal de duração do fundo (a data-limite prevista no "
+               "regulamento). Se a amortização natural ainda não tiver "
+               "terminado até esse mês, o motor força a liquidação da "
+               "carteira remanescente e paga a cascata com o que houver.",
+        faixa="FIDCs de recebíveis comerciais costumam ter 24 a 60 meses "
+              "de prazo total; 0 (sem teto) serve para checar quanto "
+              "tempo a estrutura levaria naturalmente, sem essa restrição.",
+        efeito="Se o teto cortar antes de todas as classes serem pagas, "
+               "'Todas as classes íntegras?' aponta 'NÃO' — sinal de que "
+               "o cronograma não cabe no prazo legal do fundo tal como "
+               "parametrizado.",
+    ),
+    "ajuste_curva": dict(
+        titulo="Ajuste de curva (p.p. aa)",
+        resumo="Prêmio ou desconto somado ao CDI projetado antes de "
+               "calcular as taxas atreladas a CDI (classes e, se "
+               "escolhido, a taxa de cessão) — uma forma de aproximar a "
+               "curva de juros futura real de mercado sem depender de "
+               "CDI constante.",
+        faixa="Normalmente pequeno (poucas dezenas de pontos-base) — "
+              "reflete a diferença entre o CDI spot e a expectativa do "
+              "mercado (DI futuro) para o prazo médio do fundo.",
+        efeito="Positivo encarece o funding (CDI efetivo maior); negativo "
+               "barateia. Zero (padrão) assume CDI plano pelo prazo todo.",
+    ),
 }
 
 
