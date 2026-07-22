@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import db
+from engine.cdi_api import buscar_cdi_atual
 from engine.conceitos import ajuda
 from engine.parser_operacao import interpretar_llm, interpretar_local
 from engine.exportar import gerar_excel
@@ -50,6 +51,34 @@ def _num(valor, default=0.0):
     valor novo. Normaliza para um número seguro em vez de deixar o None
     se propagar e quebrar contas mais adiante."""
     return valor if valor is not None else default
+
+
+def _atualizar_cdi():
+    """Callback do botão 'Atualizar CDI'. Roda antes do rerender do script,
+    então já deixa cdi_aa pronto no session_state antes do number_input ser
+    instanciado. Em caso de falha, NÃO mexe no valor atual do campo — só
+    informa o problema (e, se houver, a data do último valor confiável)."""
+    r = buscar_cdi_atual()
+    if r["ok"]:
+        st.session_state["cdi_aa"] = round(r["valor"], 2)
+        db.salvar_cache_indice("cdi_aa", r["valor"],
+                               r["data_referencia"].isoformat())
+        st.session_state["_cdi_status"] = (
+            "ok", "CDI atualizado via Bacen (SGS) — referência "
+                 f"{r['data_referencia'].strftime('%d/%m/%Y')}.")
+        return
+    cache = db.obter_cache_indice("cdi_aa")
+    if cache:
+        st.session_state["_cdi_status"] = (
+            "aviso", f"Bacen indisponível ({r['erro']}). Valor do campo "
+                    "não foi alterado — último dado confiável do Bacen: "
+                    f"{cache['valor']:.2f}% a.a. em "
+                    f"{cache['data_referencia']} "
+                    f"(buscado em {cache['atualizado_em']}).")
+    else:
+        st.session_state["_cdi_status"] = (
+            "erro", f"Não foi possível buscar o CDI ({r['erro']}). "
+                    "Ajuste o valor manualmente.")
 
 
 CLASSES_PADRAO = pd.DataFrame([
@@ -272,10 +301,19 @@ with st.sidebar:
         pl = _num(st.number_input("PL total (R$)", min_value=1e6, step=10e6,
                                   format="%.0f", key="pl",
                                   help=ajuda("pl_total")), 100e6)
-        cdi = _num(st.number_input("CDI projetado (% a.a.)", min_value=0.0,
-                                   step=0.25, key="cdi_aa",
-                                   help="Usado nos benchmarks CDI+ e % do CDI."),
-                  12.0)
+        c_cdi1, c_cdi2 = st.columns([3, 1])
+        cdi = _num(c_cdi1.number_input(
+            "CDI projetado (% a.a.)", min_value=0.0, step=0.25, key="cdi_aa",
+            help="Usado nos benchmarks CDI+ e % do CDI. Pode digitar direto "
+                 "ou clicar em Atualizar para puxar o valor mais recente do "
+                 "Bacen (SGS 4392 — CDI anualizado, base 252)."), 12.0)
+        c_cdi2.write("")  # alinhar verticalmente o botão com o campo
+        c_cdi2.button("🔄 Atualizar", key="btn_atualizar_cdi",
+                      on_click=_atualizar_cdi, width="stretch")
+        if "_cdi_status" in st.session_state:
+            nivel, msg = st.session_state["_cdi_status"]
+            {"ok": st.success, "aviso": st.warning,
+             "erro": st.error}[nivel](msg, icon="✅" if nivel == "ok" else None)
         ajuste_curva = _num(st.number_input(
             "Ajuste de curva (p.p. aa)", step=0.10, key="ajuste_curva",
             help="Opcional: some (ou subtraia) sobre o CDI projetado para "

@@ -101,6 +101,13 @@ CREATE TABLE IF NOT EXISTS auditoria (
     entidade_id INTEGER,
     detalhe TEXT
 );
+
+CREATE TABLE IF NOT EXISTS cache_indices (
+    chave TEXT PRIMARY KEY,      -- ex.: 'cdi_aa'
+    valor REAL,
+    data_referencia TEXT,        -- data a que o valor se refere (ex.: do Bacen)
+    atualizado_em TEXT           -- quando o app buscou/gravou este valor
+);
 """
 
 ETAPAS_FUNIL = [
@@ -471,6 +478,35 @@ def carteira_ativa_todos_deals():
                               "data_vencimento"])
     return {deal_id: g.drop(columns="deal_id")
            for deal_id, g in df.groupby("deal_id")} if not df.empty else {}
+
+
+# ------------------------------------------------------------- cache_indices
+
+def salvar_cache_indice(chave: str, valor: float, data_referencia: str):
+    """Grava o último valor obtido com sucesso para um índice (ex.: CDI
+    anualizado do Bacen). Serve de fallback caso a API esteja fora do ar
+    numa próxima sessão — sobrevive a restart do container, diferente do
+    cache em memória do Streamlit."""
+    agora = datetime.now().isoformat(timespec="seconds")
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO cache_indices (chave, valor, data_referencia, "
+            "atualizado_em) VALUES (?,?,?,?) "
+            "ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor, "
+            "data_referencia=excluded.data_referencia, "
+            "atualizado_em=excluded.atualizado_em",
+            (chave, valor, data_referencia, agora),
+        )
+
+
+def obter_cache_indice(chave: str) -> dict | None:
+    """Retorna {'valor', 'data_referencia', 'atualizado_em'} do último valor
+    persistido para a chave, ou None se nunca foi gravado."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT valor, data_referencia, atualizado_em FROM cache_indices "
+            "WHERE chave=?", (chave,)).fetchone()
+        return dict(row) if row else None
 
 
 # ---------------------------------------------------------------- seed
