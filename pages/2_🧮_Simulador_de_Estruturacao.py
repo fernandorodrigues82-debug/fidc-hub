@@ -44,6 +44,14 @@ def _taxa_aa_equivalente(taxa_am: float) -> float:
     return (1 + taxa_am) ** 12 - 1
 
 
+def _num(valor, default=0.0):
+    """st.number_input pode retornar None transitoriamente — por exemplo,
+    no navegador real, enquanto a pessoa apaga o campo antes de digitar um
+    valor novo. Normaliza para um número seguro em vez de deixar o None
+    se propagar e quebrar contas mais adiante."""
+    return valor if valor is not None else default
+
+
 CLASSES_PADRAO = pd.DataFrame([
     {"Classe": "Sênior", "% do PL": 75.0,
      "Benchmark": "CDI + spread (a.a.)", "Valor": 3.0},
@@ -261,53 +269,54 @@ with st.sidebar:
     st.caption("📖 Dúvida em algum parâmetro? Toque no (?) de cada campo ou "
                "abra a página **Guia de Conceitos** no menu.")
     with st.expander("💰 Fundo e cenário", expanded=True):
-        pl = st.number_input("PL total (R$)", min_value=1e6, step=10e6,
-                             format="%.0f", key="pl", help=ajuda("pl_total"))
-        cdi = st.number_input("CDI projetado (% a.a.)", min_value=0.0,
-                              step=0.25, key="cdi_aa",
-                              help="Usado nos benchmarks CDI+ e % do CDI.")
-        ajuste_curva = st.number_input(
+        pl = _num(st.number_input("PL total (R$)", min_value=1e6, step=10e6,
+                                  format="%.0f", key="pl",
+                                  help=ajuda("pl_total")), 100e6)
+        cdi = _num(st.number_input("CDI projetado (% a.a.)", min_value=0.0,
+                                   step=0.25, key="cdi_aa",
+                                   help="Usado nos benchmarks CDI+ e % do CDI."),
+                  12.0)
+        ajuste_curva = _num(st.number_input(
             "Ajuste de curva (p.p. aa)", step=0.10, key="ajuste_curva",
             help="Opcional: some (ou subtraia) sobre o CDI projetado para "
                  "aproximar a curva de juros futura real de mercado (DI "
                  "futuro), em vez de assumir CDI constante. Ex.: se o "
                  "mercado precifica queda de juros no prazo do fundo, use "
-                 "um valor negativo. 0 = usa o CDI projetado direto (flat).")
+                 "um valor negativo. 0 = usa o CDI projetado direto (flat)."),
+            0.0)
         modo_cessao = st.radio(
             "Como informar a taxa de cessão?",
             ["Taxa fixa (% a.m.)", "CDI + spread (a.a.)"],
             key="modo_cessao", horizontal=True)
         if modo_cessao == "CDI + spread (a.a.)":
-            spread_cessao = st.number_input(
+            spread_cessao = _num(st.number_input(
                 "Cessão: CDI + (% a.a.)", step=0.25, key="spread_cessao",
                 help="Ex.: regra 'maior entre CDI+X e PDD+despesas' — "
-                     "informe o X vencedor aqui.")
+                     "informe o X vencedor aqui."), 6.0)
             t_ces = _taxa_am("CDI + spread (a.a.)", spread_cessao, cdi,
                             ajuste_curva)
             st.caption(f"≈ {t_ces*100:.3f}% a.m. · "
                       f"{_taxa_aa_equivalente(t_ces)*100:.2f}% aa equivalente")
         else:
-            t_ces = st.number_input("Taxa de cessão da carteira (% a.m.)",
-                                    step=0.05, key="t_ces",
-                                    help=ajuda("taxa_cessao")) / 100
-        custo_inicial = st.number_input(
+            t_ces = _num(st.number_input(
+                "Taxa de cessão da carteira (% a.m.)", step=0.05,
+                key="t_ces", help=ajuda("taxa_cessao")), 2.20) / 100
+        custo_inicial = _num(st.number_input(
             "Custo inicial one-off (R$)", min_value=0.0, step=5000.0,
             key="custo_inicial",
             help="Custo único de estruturação (ex.: taxa de distribuição "
                  "flat sobre a cota sênior). Não é recorrente — some aqui "
-                 "o valor total em R$.")
-        custo_inicial = float(custo_inicial) if custo_inicial else 0.0
-        custo_inicial_meses = st.number_input(
+                 "o valor total em R$."), 0.0)
+        custo_inicial_meses = int(_num(st.number_input(
             "Diferir esse custo em quantos meses?", min_value=1, step=1,
             key="custo_inicial_meses",
             help="1 = todo o custo sai do caixa no mês 1. Um número maior "
                  "dilui o impacto — o custo total é o mesmo, mas o golpe "
-                 "de caixa em qualquer mês individual é menor.")
-        custo_inicial_meses = int(custo_inicial_meses) if custo_inicial_meses else 1
+                 "de caixa em qualquer mês individual é menor."), 1) or 1)
     with st.expander("📅 Carteira e prazos", expanded=False):
-        prazo_dias = st.number_input(
+        prazo_dias = _num(st.number_input(
             "Prazo médio dos recebíveis (dias)", min_value=1, max_value=720,
-            step=5, key="prazo_dias", help=ajuda("prazo_medio"))
+            step=5, key="prazo_dias", help=ajuda("prazo_medio")), 90)
         st.caption(f"≈ {prazo_dias/30:.2f} meses")
         revolv = st.slider("Revolvência (meses)", 0, 60, key="revolv",
                            help=ajuda("revolvencia"))
@@ -317,7 +326,7 @@ with st.sidebar:
             key="rampa", help=ajuda("rampa"))
         carencia = st.slider("Carência antes da amortização (meses)", 0, 24,
                              key="carencia", help=ajuda("carencia"))
-        prazo_maximo = st.number_input(
+        prazo_maximo = int(_num(st.number_input(
             "Prazo máximo do fundo (meses) — 0 = sem teto", min_value=0,
             step=1, key="prazo_maximo",
             help="Teto legal de duração do fundo. Se a amortização natural "
@@ -325,28 +334,29 @@ with st.sidebar:
                  "liquidação da carteira remanescente e paga a cascata com "
                  "o que houver — util para checar se o cronograma cabe no "
                  "prazo do fundo. 0 desativa o teto (roda até quitar "
-                 "naturalmente).")
-        prazo_maximo = int(prazo_maximo) if prazo_maximo else 0
-        prep = st.number_input("Pré-pagamento (% a.m.)", step=0.5, key="prep",
-                               help=ajuda("prepagamento")) / 100
+                 "naturalmente)."), 0) or 0)
+        prep = _num(st.number_input("Pré-pagamento (% a.m.)", step=0.5,
+                                    key="prep",
+                                    help=ajuda("prepagamento")), 1.0) / 100
     with st.expander("⚠️ Risco", expanded=False):
-        inad = st.number_input("Inadimplência base (% dos vencimentos/mês)",
-                               step=0.10, key="inad",
-                               help=ajuda("inadimplencia")) / 100
+        inad = _num(st.number_input(
+            "Inadimplência base (% dos vencimentos/mês)", step=0.10,
+            key="inad", help=ajuda("inadimplencia")), 0.80) / 100
         recup = st.slider("Recuperação de créditos vencidos (%)", 0, 80,
                           key="recup", help=ajuda("recuperacao")) / 100
-        custos = st.number_input("Custos do fundo (% PL a.a.)", step=0.10,
-                                 key="custos", help=ajuda("custos")) / 100
+        custos = _num(st.number_input("Custos do fundo (% PL a.a.)",
+                                      step=0.10, key="custos",
+                                      help=ajuda("custos")), 1.20) / 100
         stress = st.slider("Stress sobre a inadimplência (x)", 1.0, 15.0,
                            step=0.5, key="stress", help=ajuda("stress"))
-        sub_min_pct = st.number_input(
+        sub_min_pct = _num(st.number_input(
             "Subordinação mínima — gatilho (%)", min_value=0.0,
             max_value=60.0, step=1.0, key="sub_min",
             help="Evento de avaliação: se o índice de subordinação "
                  "dinâmico — (ativos − dívida das classes) / ativos — cair "
                  "abaixo deste mínimo antes da amortização, o fundo para "
                  "de reinvestir e amortiza antecipadamente, protegendo as "
-                 "classes por senioridade. 0 = sem gatilho.")
+                 "classes por senioridade. 0 = sem gatilho."), 12.0)
 
 classes = [Classe(str(row["Classe"]), float(row["% do PL"]) / 100,
                   _taxa_am(row["Benchmark"], float(row["Valor"] or 0), cdi,
