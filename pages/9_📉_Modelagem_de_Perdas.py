@@ -138,7 +138,8 @@ st.divider()
 st.subheader("Premissas de mercado")
 c7, c8 = st.columns([3, 1])
 cdi_aa = _num(c7.number_input(
-    "CDI projetado (% a.a.)", min_value=0.0, step=0.25, key="cdi_aa_perdas",
+    "CDI projetado (% a.a.)", min_value=0.0, step=0.25, value=12.0,
+    key="cdi_aa_perdas",
     help="Usado para render o caixa e como base dos spreads de Sênior/"
          "Mezanino."), 12.0)
 c8.write("")
@@ -162,11 +163,15 @@ spread_meza = _num(c11.number_input(
     "Spread Mezanino sobre CDI (p.p. aa)", step=0.25, value=3.0,
     key="spread_meza_perdas",
     help="SÓ o spread — mesma lógica da Sênior."), 3.0) / 100
+cdi_efetivo_aa = cdi_aa / 100 + ajuste_curva
+st.caption(
+    f"Pré-equivalente (dado o CDI acima): Sênior ≈ "
+    f"{(cdi_efetivo_aa+spread_sr)*100:.2f}% aa · Mezanino ≈ "
+    f"{(cdi_efetivo_aa+spread_meza)*100:.2f}% aa")
 
 c12, c13 = st.columns(2)
 modo_cessao = c12.radio("Taxa de cessão", ["% a.m.", "CDI + spread (a.a.)"],
                         key="modo_cessao_perdas", horizontal=True)
-cdi_efetivo_aa = cdi_aa / 100 + ajuste_curva
 if modo_cessao == "% a.m.":
     taxa_cessao_am = _num(c13.number_input(
         "Taxa de cessão (% a.m.)", min_value=0.0, step=0.25, value=2.5,
@@ -179,7 +184,11 @@ else:
         key="spread_cessao_perdas"), 6.0) / 100
     taxa_cessao_am = (1 + cdi_efetivo_aa + spread_cessao) ** (1 / 12) - 1
 taxa_cessao_aa_equiv = (1 + taxa_cessao_am) ** 12 - 1
-st.caption(f"≈ {taxa_cessao_am*100:.3f}% a.m. · {taxa_cessao_aa_equiv*100:.2f}% a.a. equivalente")
+spread_cessao_equiv = (taxa_cessao_aa_equiv - cdi_efetivo_aa) * 100
+sinal_cessao = "+" if spread_cessao_equiv >= 0 else ""
+st.caption(
+    f"≈ {taxa_cessao_am*100:.3f}% a.m. · {taxa_cessao_aa_equiv*100:.2f}% a.a. "
+    f"pré · equivalente a CDI{sinal_cessao}{spread_cessao_equiv:.2f} p.p. a.a.")
 
 custo_fidc_aa = _num(st.number_input(
     "Custo FIDC — taxa de administração e despesas (% a.a. sobre o PL)",

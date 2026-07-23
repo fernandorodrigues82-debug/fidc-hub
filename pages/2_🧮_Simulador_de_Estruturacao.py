@@ -333,12 +333,16 @@ with st.sidebar:
                      "informe o X vencedor aqui."), 6.0)
             t_ces = _taxa_am("CDI + spread (a.a.)", spread_cessao, cdi,
                             ajuste_curva)
-            st.caption(f"≈ {t_ces*100:.3f}% a.m. · "
-                      f"{_taxa_aa_equivalente(t_ces)*100:.2f}% aa equivalente")
         else:
             t_ces = _num(st.number_input(
                 "Taxa de cessão da carteira (% a.m.)", step=0.05,
                 key="t_ces", help=ajuda("taxa_cessao")), 2.20) / 100
+        t_ces_aa = _taxa_aa_equivalente(t_ces)
+        spread_equiv = (t_ces_aa - (cdi + ajuste_curva) / 100) * 100
+        sinal = "+" if spread_equiv >= 0 else ""
+        st.caption(
+            f"≈ {t_ces*100:.3f}% a.m. · {t_ces_aa*100:.2f}% a.a. pré · "
+            f"equivalente a CDI{sinal}{spread_equiv:.2f} p.p. a.a.")
         custo_inicial = _num(st.number_input(
             "Custo inicial one-off (R$)", min_value=0.0, step=5000.0,
             key="custo_inicial",
@@ -402,19 +406,36 @@ classes = [Classe(str(row["Classe"]), float(row["% do PL"]) / 100,
            for _, row in cdf.iterrows()]
 classes.append(Classe("Júnior", pct_sub / 100, 0.0, residual=True))
 
-with st.expander("📐 Pré equivalente por classe (dado o CDI acima)",
-                 expanded=False):
-    linhas_pre = []
+with st.expander("📐 Equivalência CDI+ ↔ pré por classe (dado o CDI acima)",
+                 expanded=True):
+    cdi_efetivo_classes = cdi + ajuste_curva
+    linhas_equiv = []
     for _, row in cdf.iterrows():
-        if row["Benchmark"] in ("CDI + spread (a.a.)", "% do CDI"):
-            ta = _taxa_am(row["Benchmark"], float(row["Valor"] or 0), cdi,
-                         ajuste_curva)
-            linhas_pre.append((row["Classe"], f"{_taxa_aa_equivalente(ta)*100:.2f}% aa"))
-    if linhas_pre:
-        for nome, pre in linhas_pre:
-            st.caption(f"**{nome}**: ≈ {pre} pré-equivalente")
-    else:
-        st.caption("Nenhuma classe usa benchmark atrelado a CDI no momento.")
+        benchmark = row["Benchmark"]
+        ta = _taxa_am(benchmark, float(row["Valor"] or 0), cdi, ajuste_curva)
+        ta_aa = _taxa_aa_equivalente(ta)
+        spread_equiv = (ta_aa - cdi_efetivo_classes / 100) * 100
+        sinal = "+" if spread_equiv >= 0 else ""
+        if benchmark == "Prefixado (a.a.)":
+            linhas_equiv.append(
+                (row["Classe"], f"{ta_aa*100:.2f}% aa pré (informado) · "
+                                f"equivalente a CDI{sinal}{spread_equiv:.2f} p.p. aa"))
+        elif benchmark == "Fixa (a.m.)":
+            linhas_equiv.append(
+                (row["Classe"], f"{float(row['Valor'] or 0):.2f}% a.m. (informado) "
+                                f"≈ {ta_aa*100:.2f}% aa pré · equivalente a "
+                                f"CDI{sinal}{spread_equiv:.2f} p.p. aa"))
+        elif benchmark == "% do CDI":
+            linhas_equiv.append(
+                (row["Classe"], f"{float(row['Valor'] or 0):.1f}% do CDI (informado) · "
+                                f"equivalente a {ta_aa*100:.2f}% aa pré · "
+                                f"CDI{sinal}{spread_equiv:.2f} p.p. aa"))
+        else:  # CDI + spread (a.a.)
+            linhas_equiv.append(
+                (row["Classe"], f"CDI{sinal}{spread_equiv:.2f} p.p. aa (informado) · "
+                                f"equivalente a {ta_aa*100:.2f}% aa pré"))
+    for nome, linha in linhas_equiv:
+        st.caption(f"**{nome}**: {linha}")
     st.caption("Cálculo aproximado assumindo o CDI (+ ajuste de curva) "
               "constante ao longo do prazo — não é uma curva de mercado "
               "real (DI futuro) importada automaticamente. Use o campo "
