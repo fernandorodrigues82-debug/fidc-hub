@@ -5,7 +5,10 @@ import streamlit as st
 import db
 from engine.cdi_api import buscar_cdi_atual
 from engine.conceitos import ajuda
-from engine.perda_bullet import ParametrosBullet, calcular_cenario, curva_perda, pontos_de_ruptura
+from engine.perda_bullet import (ParametrosBullet, PoolRisco, calcular_cenario,
+                                 cenario_sistemico, choque_idiossincratico,
+                                 curva_multiplicador_pools, curva_perda,
+                                 pontos_de_ruptura, pontos_de_ruptura_pools)
 
 st.set_page_config(page_title="Modelagem de perdas", page_icon="📉", layout="wide")
 db.init_db()
@@ -184,50 +187,171 @@ custo_fidc_aa = _num(st.number_input(
 
 st.divider()
 
-# ---------------------------------------------------------------- perda base
-st.subheader("Cenário Base")
+# ---------------------------------------------------------------- perda esperada
+st.subheader("Perda esperada")
+modo_carteira = st.radio(
+    "Carteira", ["Única (perda-base homogênea)", "Segmentar por pool de risco"],
+    key="modo_carteira_perdas", horizontal=True,
+    help="Use 'Segmentar' quando a carteira tiver perfis de risco bem "
+         "diferentes dentro do mesmo fundo — por exemplo, uma fatia "
+         "pulverizada em sacados de alta qualidade e outra fatia de risco "
+         "do próprio originador. Uma taxa de perda única mascara essa "
+         "diferença.")
+
+pools: list[PoolRisco] = []
+perdas_base_por_pool: dict[str, float] = {}
 sugestao_base = None
 if calib and calib.get("taxa_media_am") is not None:
     m = calib["taxa_media_am"]
     sugestao_base = 1 - (1 - m) ** prazo_meses
+
+if modo_carteira == "Única (perda-base homogênea)":
+    if sugestao_base is not None:
+        st.caption(
+            f"Sugestão a partir da calibração real da carteira de "
+            f"**{originador['razao_social']}** ({calib['n_meses']} meses de "
+            f"histórico, taxa média {m*100:.3f}% a.m.) composta pelo prazo "
+            f"do fundo: **{sugestao_base*100:.2f}%**. Ajuste se achar "
+            f"necessário — é uma sugestão, não uma trava.")
+    perda_base_pct = _num(st.number_input(
+        "Perda assumida no cenário Base (% da carteira)", min_value=0.0,
+        max_value=100.0, step=0.1,
+        value=round((sugestao_base or 0.005) * 100, 2),
+        key="perda_base_perdas",
+        help="Premissa de perda esperada/histórica para o cenário Base. Os "
+             "outros 3 cenários são calculados, não digitados — são os "
+             "limiares em que Júnior e Mezanino se esgotam."), 0.5) / 100
+else:
     st.caption(
-        f"Sugestão a partir da calibração real da carteira de "
-        f"**{originador['razao_social']}** ({calib['n_meses']} meses de "
-        f"histórico, taxa média {m*100:.3f}% a.m.) composta pelo prazo do "
-        f"fundo: **{sugestao_base*100:.2f}%**. Ajuste se achar necessário — "
-        f"é uma sugestão, não uma trava.")
-perda_base_pct = _num(st.number_input(
-    "Perda assumida no cenário Base (% da carteira)", min_value=0.0,
-    max_value=100.0, step=0.1,
-    value=round((sugestao_base or 0.005) * 100, 2),
-    key="perda_base_perdas",
-    help="Premissa de perda esperada/histórica para o cenário Base. Os "
-         "outros 3 cenários são calculados, não digitados — são os "
-         "limiares em que Júnior e Mezanino se esgotam."), 0.5) / 100
+        "Cada linha é uma fatia da carteira de direitos creditórios (não do "
+        "PL) — a soma de '% da carteira' deve fechar 100%.")
+    default_pools = pd.DataFrame([
+        {"nome": "Sacados", "% da carteira": 70.0, "tipo de risco": "sacado",
+         "regime jurídico": "true_sale", "nº de contrapartes": 10,
+         "rating": "AAA", "perda base (%)": 0.3, "correlação macro (%)": 30.0},
+        {"nome": "Originador", "% da carteira": 30.0, "tipo de risco": "originador",
+         "regime jurídico": "coobrigacao", "nº de contrapartes": 1,
+         "rating": "Sem rating", "perda base (%)": 2.0, "correlação macro (%)": 90.0},
+    ])
+    editado = st.data_editor(
+        st.session_state.get("tabela_pools_perdas", default_pools),
+        key="tabela_pools_perdas", num_rows="dynamic", width="stretch",
+        column_config={
+            "tipo de risco": st.column_config.SelectboxColumn(
+                options=["sacado", "originador"]),
+            "regime jurídico": st.column_config.SelectboxColumn(
+                options=["true_sale", "coobrigacao"]),
+            "% da carteira": st.column_config.NumberColumn(min_value=0.0, max_value=100.0),
+            "perda base (%)": st.column_config.NumberColumn(min_value=0.0, max_value=100.0),
+            "correlação macro (%)": st.column_config.NumberColumn(min_value=0.0, max_value=100.0),
+            "nº de contrapartes": st.column_config.NumberColumn(min_value=1, step=1),
+        })
+
+    soma_pct = editado["% da carteira"].sum()
+    if abs(soma_pct - 100) > 0.5:
+        st.error(f"Os pools somam {soma_pct:.1f}% da carteira — ajuste para "
+                "fechar 100%.")
+        st.stop()
+
+    for _, linha in editado.iterrows():
+        n_contrap = linha["nº de contrapartes"]
+        pools.append(PoolRisco(
+            nome=str(linha["nome"]),
+            pct_carteira=float(linha["% da carteira"]) / 100,
+            tipo_risco=str(linha["tipo de risco"]),
+            regime_juridico=str(linha["regime jurídico"]),
+            n_contrapartes=int(n_contrap) if pd.notna(n_contrap) else None,
+            rating=str(linha["rating"]) if pd.notna(linha["rating"]) else None,
+            perda_base_pct=float(linha["perda base (%)"]) / 100,
+            correlacao_macro=float(linha["correlação macro (%)"]) / 100,
+        ))
+    perdas_base_por_pool = {p_.nome: p_.perda_base_pct for p_ in pools}
+
+    # avisos -- risco dobrado (mesmo nome como devedor e como coobrigado) e
+    # concentração regulatória por devedor/coobrigado
+    for p_ in pools:
+        if p_.risco_dobrado:
+            st.warning(
+                f"⚠️ **{p_.nome}** ({p_.pct_carteira*100:.0f}% da carteira): "
+                "risco do próprio originador COM coobrigação/recurso a ele "
+                "mesmo. Isso não é uma segunda linha de defesa de verdade — "
+                "se o originador tropeçar, a obrigação original e o recurso "
+                "falham juntos, pela mesma causa.")
+        if p_.pct_carteira >= 0.20 and p_.tipo_risco == "originador":
+            st.caption(
+                f"📋 {p_.nome} concentra {p_.pct_carteira*100:.0f}% da "
+                "carteira num único devedor/coobrigado — vale confirmar se "
+                "isso respeita o limite de concentração por devedor de um "
+                "FIDC padronizado (CVM 175) ou se o fundo precisa ser "
+                "estruturado como FIDC-NP (não padronizado).")
+
+    perda_base_pct = sum(p_.pct_carteira * p_.perda_base_pct for p_ in pools)
 
 params = ParametrosBullet(
     pl_inicial=pl_inicial, pct_senior=pct_senior, pct_mezanino=pct_mezanino,
     pct_caixa=pct_caixa, prazo_meses=prazo_meses, taxa_cessao_am=taxa_cessao_am,
     cdi_aa=cdi_aa / 100, ajuste_curva_aa=ajuste_curva,
     spread_senior_aa=spread_sr, spread_mezanino_aa=spread_meza,
-    custo_fidc_aa=custo_fidc_aa, perda_base_pct=perda_base_pct,
+    custo_fidc_aa=custo_fidc_aa, perda_base_pct=perda_base_pct, pools=pools,
 )
 
 st.divider()
 
 # ---------------------------------------------------------------- cenários
+def _rotulo_severidade(c: dict) -> str:
+    """No modo pools o rótulo é um multiplicador de severidade sobre a
+    perda-base combinada; no modo única é a perda % direto."""
+    if "multiplicador" in c:
+        return f"{c['multiplicador']:.2f}x severidade"
+    return f"{c['perda_pct']*100:.1f}% de perda"
+
+
 st.subheader("Os 4 cenários")
-cenarios = pontos_de_ruptura(params)
+if modo_carteira == "Única (perda-base homogênea)":
+    cenarios = pontos_de_ruptura(params)
+else:
+    cenarios = pontos_de_ruptura_pools(params, perdas_base_por_pool)
+    st.caption(
+        "O multiplicador escala a perda-base de TODOS os pools ao mesmo "
+        "tempo, na mesma proporção — é a leitura equivalente à perda % do "
+        "modo único, adaptada para quando cada pool tem sua própria "
+        "perda-base.")
 
 cols = st.columns(len(cenarios))
 for col, c in zip(cols, cenarios):
     with col:
-        st.metric(c["nome"], f"{c['perda_pct']*100:.1f}% de perda")
+        st.metric(c["nome"], _rotulo_severidade(c))
         st.caption(c["descricao"])
         st.write(f"PL Final: R$ {c['pl_final']/1e6:,.1f} mi")
         st.write(f"Sênior: {(c['pct_sr'] or 0)*100:.0f}% · "
                 f"Mezanino: {(c['pct_meza'] or 0)*100:.0f}% · "
                 f"Júnior: {(c['pct_jr'] or 0)*100:.0f}%")
+
+if modo_carteira != "Única (perda-base homogênea)" and pools:
+    st.subheader("Cenários adicionais de concentração")
+    pools_com_n = [p_ for p_ in pools if p_.n_contrapartes and p_.n_contrapartes > 1]
+    extras = []
+    for p_ in pools_com_n:
+        r = choque_idiossincratico(params, perdas_base_por_pool, p_.nome)
+        if r:
+            extras.append((f"Quebra do maior nome — {p_.nome}", r))
+    choque_macro = st.slider(
+        "Choque sistêmico adicional (%)", min_value=0, max_value=300,
+        value=100, step=10, key="choque_macro_perdas",
+        help="Multiplica a perda-base de cada pool pela sua correlação a um "
+             "fator comum — pools mais correlacionados ao sistêmico pioram "
+             "mais junto.") / 100
+    extras.append(("Cenário sistêmico", cenario_sistemico(
+        params, perdas_base_por_pool, choque_macro)))
+
+    cols_extra = st.columns(len(extras))
+    for col, (nome, r) in zip(cols_extra, extras):
+        with col:
+            st.metric(nome, f"R$ {r['pl_final']/1e6:,.1f} mi PL Final")
+            st.caption(r["descricao"])
+            st.write(f"Sênior: {(r['pct_sr'] or 0)*100:.0f}% · "
+                    f"Mezanino: {(r['pct_meza'] or 0)*100:.0f}% · "
+                    f"Júnior: {(r['pct_jr'] or 0)*100:.0f}%")
 
 st.divider()
 st.subheader("Ponte de valor por cenário")
@@ -248,8 +372,7 @@ for aba, c in zip(abas, cenarios):
             totals={"marker": {"color": "#1C2B2D"}},
         ))
         fig.update_layout(height=380, showlegend=False,
-                          title=f"{c['nome']} — {c['perda_pct']*100:.1f}% de perda "
-                                "(R$ mi)")
+                          title=f"{c['nome']} — {_rotulo_severidade(c)} (R$ mi)")
         st.plotly_chart(fig, width="stretch")
         m1, m2, m3 = st.columns(3)
         m1.metric("Sênior", f"R$ {c['sr_final']/1e6:,.1f} mi",
@@ -266,19 +389,30 @@ st.subheader("Curva de perda × recuperação por classe")
 st.caption(
     "Mesma lógica dos 4 cenários, mas contínua — mostra exatamente onde cada "
     "ruptura acontece, em vez de só 4 pontos.")
-curva = curva_perda(params, passos=101)
+if modo_carteira == "Única (perda-base homogênea)":
+    curva = curva_perda(params, passos=101)
+    eixo_x = curva["perda_pct"] * 100
+    eixo_titulo = "Perda sobre a carteira (%)"
+    valor_linha = lambda c: c["perda_pct"] * 100
+else:
+    k_max = max(5.0, max((c.get("multiplicador") or 0) for c in cenarios) * 1.2)
+    curva = curva_multiplicador_pools(params, perdas_base_por_pool, k_max=k_max, passos=101)
+    eixo_x = curva["multiplicador"]
+    eixo_titulo = "Multiplicador de severidade sobre a perda-base combinada"
+    valor_linha = lambda c: c["multiplicador"]
+
 fig2 = go.Figure()
-fig2.add_trace(go.Scatter(x=curva["perda_pct"] * 100, y=curva["pct_sr"] * 100,
+fig2.add_trace(go.Scatter(x=eixo_x, y=curva["pct_sr"] * 100,
                           name="Sênior", line=dict(color="#0B5563", width=3)))
-fig2.add_trace(go.Scatter(x=curva["perda_pct"] * 100, y=curva["pct_meza"] * 100,
+fig2.add_trace(go.Scatter(x=eixo_x, y=curva["pct_meza"] * 100,
                           name="Mezanino", line=dict(color="#B58900", width=3)))
-fig2.add_trace(go.Scatter(x=curva["perda_pct"] * 100, y=curva["pct_jr"].clip(lower=0) * 100,
+fig2.add_trace(go.Scatter(x=eixo_x, y=curva["pct_jr"].clip(lower=0) * 100,
                           name="Júnior", line=dict(color="#B23A48", width=3)))
 for c in cenarios[1:]:
-    fig2.add_vline(x=c["perda_pct"] * 100, line_dash="dot",
+    fig2.add_vline(x=valor_linha(c), line_dash="dot",
                    line_color="rgba(100,100,100,0.5)",
                    annotation_text=c["nome"], annotation_position="top")
-fig2.update_layout(height=420, xaxis_title="Perda sobre a carteira (%)",
+fig2.update_layout(height=420, xaxis_title=eixo_titulo,
                    yaxis_title="Recuperação da classe (%)",
                    legend=dict(orientation="h", y=-0.2))
 st.plotly_chart(fig2, width="stretch")
