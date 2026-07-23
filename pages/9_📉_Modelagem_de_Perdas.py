@@ -267,8 +267,9 @@ else:
         ))
     perdas_base_por_pool = {p_.nome: p_.perda_base_pct for p_ in pools}
 
-    # avisos -- risco dobrado (mesmo nome como devedor e como coobrigado) e
-    # concentração regulatória por devedor/coobrigado
+    # concentração por nome -- não há limite numérico fixo da CVM (ver nota
+    # abaixo), mas é um dos principais indicadores de risco em crédito
+    # estruturado e vale sinalizar quando um nome pesa muito na carteira
     for p_ in pools:
         if p_.risco_dobrado:
             st.warning(
@@ -277,13 +278,26 @@ else:
                 "mesmo. Isso não é uma segunda linha de defesa de verdade — "
                 "se o originador tropeçar, a obrigação original e o recurso "
                 "falham juntos, pela mesma causa.")
-        if p_.pct_carteira >= 0.20 and p_.tipo_risco == "originador":
-            st.caption(
-                f"📋 {p_.nome} concentra {p_.pct_carteira*100:.0f}% da "
-                "carteira num único devedor/coobrigado — vale confirmar se "
-                "isso respeita o limite de concentração por devedor de um "
-                "FIDC padronizado (CVM 175) ou se o fundo precisa ser "
-                "estruturado como FIDC-NP (não padronizado).")
+        if p_.n_contrapartes:
+            conc_por_nome = p_.pct_carteira / p_.n_contrapartes
+            if conc_por_nome >= 0.15:
+                st.caption(
+                    f"📋 {p_.nome}: em média, cada uma das "
+                    f"{p_.n_contrapartes} contraparte(s) responde por "
+                    f"~{conc_por_nome*100:.0f}% da carteira. A Res. CVM 175 "
+                    "(Anexo Normativo II) não fixa um percentual único de "
+                    "concentração por sacado/devedor — é principiológica: "
+                    "exige que o risco seja identificado, mensurado e "
+                    "divulgado, com o limite definido no regulamento do "
+                    "fundo (política de investimento, subordinação, "
+                    "público-alvo). Como referência de mercado, é comum "
+                    "ver ~5-10% por sacado em carteiras pulverizadas e "
+                    "~15-20% em carteiras corporativas — concentração "
+                    "maior é possível em fundos mono/poucos sacados, desde "
+                    "que prevista no regulamento e compatível com o perfil "
+                    "de risco. Na prática, quanto maior a concentração, "
+                    "mais subordinação, garantias ou covenants o mercado "
+                    "tende a exigir, e mais isso pesa na nota de rating.")
 
     perda_base_pct = sum(p_.pct_carteira * p_.perda_base_pct for p_ in pools)
 
