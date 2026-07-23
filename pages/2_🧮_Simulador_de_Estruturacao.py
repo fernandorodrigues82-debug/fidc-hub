@@ -6,6 +6,7 @@ import streamlit as st
 
 import db
 from engine.cdi_api import buscar_cdi_atual
+from engine.curva_pre import taxa_pre_no_prazo
 from engine.conceitos import ajuda
 from engine.parser_operacao import interpretar_llm, interpretar_local
 from engine.exportar import gerar_excel
@@ -81,6 +82,33 @@ def _atualizar_cdi():
                     "Ajuste o valor manualmente.")
 
 
+def _buscar_curva_pre():
+    """Callback do botão 'Buscar' (ajuste de curva). Usa o prazo médio já
+    salvo no session_state (o widget de prazo_dias só é instanciado mais
+    abaixo no script, mas o valor da rodada anterior já está disponível
+    aqui) para interpolar a curva Pré da B3 e converter em ajuste sobre o
+    CDI atual: ajuste = taxa_pré_b3 - CDI. Em caso de falha, NÃO mexe no
+    valor atual do campo."""
+    prazo_dias_atual = float(st.session_state.get("prazo_dias", 90))
+    cdi_atual = float(st.session_state.get("cdi_aa", 12.0))
+    r = taxa_pre_no_prazo(prazo_dias_atual)
+    if not r["ok"]:
+        st.session_state["_curva_status"] = (
+            "erro", f"Não foi possível buscar a curva da B3 ({r['erro']}). "
+                    "Ajuste manualmente.")
+        return
+    ajuste = round(r["taxa"] * 100 - cdi_atual, 2)
+    st.session_state["ajuste_curva"] = ajuste
+    fonte = ("curva de " + r["data_curva"] if r["fonte"] == "b3"
+            else "última curva salva, B3 indisponível agora")
+    nivel = "ok" if r["fonte"] == "b3" else "aviso"
+    msg = (f"Pré B3 em {prazo_dias_atual:.0f} dias: {r['taxa']*100:.2f}% aa "
+          f"({fonte}) → ajuste de {ajuste:+.2f} p.p. sobre o CDI aplicado.")
+    if r.get("aviso"):
+        msg += " " + r["aviso"]
+    st.session_state["_curva_status"] = (nivel, msg)
+
+
 CLASSES_PADRAO = pd.DataFrame([
     {"Classe": "Sênior", "% do PL": 75.0,
      "Benchmark": "CDI + spread (a.a.)", "Valor": 3.0},
@@ -90,7 +118,7 @@ CLASSES_PADRAO = pd.DataFrame([
 
 DEFAULTS = dict(pl=100e6, sub_min=12.0, cdi_aa=12.0, ajuste_curva=0.0,
                 t_ces=2.20, modo_cessao="Taxa fixa (% a.m.)",
-                prazo_dias=90, revolv=24, rampa=0, carencia=0,
+                prazo_dias=90, carencia=24, rampa=0,
                 custo_inicial=0.0, custo_inicial_meses=1, prazo_maximo=0,
                 prep=1.0, inad=0.80, recup=30, custos=1.20, stress=1.0)
 for k, v in DEFAULTS.items():
@@ -103,7 +131,7 @@ if pend := st.session_state.pop("_aplicar", None):
     simples = {"pl_total": ("pl", float), "cdi_aa": ("cdi_aa", float),
                "taxa_cessao_am": ("t_ces", lambda v: round(v * 100, 2)),
                "prazo_medio_meses": ("prazo_dias", lambda v: round(v * 30)),
-               "meses_revolvencia": ("revolv", int),
+               "meses_carencia": ("carencia", int),
                "inadimplencia_am_pct": ("inad", float)}
     for origem, (chave, conv) in simples.items():
         if origem in pend:
@@ -131,12 +159,16 @@ if pend := st.session_state.pop("_aplicar", None):
 # carrega uma simulação salva por completo (substitui todos os campos)
 if pend_full := st.session_state.pop("_carregar_simulacao", None):
     campos_simples = ["pl", "cdi_aa", "ajuste_curva", "t_ces", "modo_cessao",
-                      "prazo_dias", "revolv", "rampa", "carencia",
+                      "prazo_dias", "carencia", "rampa",
                       "custo_inicial", "custo_inicial_meses", "prazo_maximo",
                       "prep", "inad", "recup", "custos", "sub_min", "stress"]
     for k in campos_simples:
         if k in pend_full:
             st.session_state[k] = pend_full[k]
+    if "revolv" in pend_full:
+        # compat: salva antes da fusão revolvência+carência em um só campo
+        st.session_state["carencia"] = (pend_full.get("revolv", 24)
+                                        + pend_full.get("carencia", 0))
     if "classes_editor" in pend_full:
         st.session_state["classes_df"] = pd.DataFrame(pend_full["classes_editor"])
     st.session_state["sim_carregada_id"] = pend_full.get("_sim_id")
@@ -174,9 +206,9 @@ if origs_topo:
             st.session_state["pl"] = float(o_ativo["pl_alvo"])
             aplicados.append(f"PL alvo R$ {o_ativo['pl_alvo']/1e6:,.0f} mi")
         if o_ativo.get("meses_rampa"):
-            revolv_atual = int(st.session_state.get("revolv", 24))
+            carencia_atual = int(st.session_state.get("carencia", 24))
             st.session_state["rampa"] = min(int(o_ativo["meses_rampa"]),
-                                            revolv_atual)
+                                            carencia_atual)
             aplicados.append(f"rampa {o_ativo['meses_rampa']:.0f} m")
         if aplicados:
             st.info(f"📋 Aplicado do cadastro de {o_ativo['razao_social']}: "
@@ -220,7 +252,7 @@ with st.expander("✍️ Descrever a operação (a IA preenche os parâmetros)")
     st.caption("Escreva como você falaria com a mesa: "
                "*\"FIDC de duplicatas de 80 milhões, sênior de 70% a CDI+3,5, "
                "mezanino de 10% a CDI+6, cessão de 2,4% a.m., prazo médio de "
-               "60 dias, revolvência de 2 anos, perda histórica de 1,2%\"*")
+               "60 dias, carência de 2 anos, perda histórica de 1,2%\"*")
     texto = st.text_area("Descrição da operação", height=110,
                          label_visibility="collapsed")
     c_a, c_b = st.columns([1, 3])
@@ -314,14 +346,25 @@ with st.sidebar:
             nivel, msg = st.session_state["_cdi_status"]
             {"ok": st.success, "aviso": st.warning,
              "erro": st.error}[nivel](msg, icon="✅" if nivel == "ok" else None)
-        ajuste_curva = _num(st.number_input(
+        c_aj1, c_aj2 = st.columns([3, 1])
+        ajuste_curva = _num(c_aj1.number_input(
             "Ajuste de curva (p.p. aa)", step=0.10, key="ajuste_curva",
             help="Opcional: some (ou subtraia) sobre o CDI projetado para "
                  "aproximar a curva de juros futura real de mercado (DI "
                  "futuro), em vez de assumir CDI constante. Ex.: se o "
                  "mercado precifica queda de juros no prazo do fundo, use "
-                 "um valor negativo. 0 = usa o CDI projetado direto (flat)."),
+                 "um valor negativo. 0 = usa o CDI projetado direto (flat). "
+                 "Pode digitar direto ou clicar em Buscar para puxar da "
+                 "curva Pré real da B3, interpolada no prazo médio dos "
+                 "recebíveis."),
             0.0)
+        c_aj2.write("")
+        c_aj2.button("🔄 Buscar", key="btn_curva_pre",
+                    on_click=_buscar_curva_pre, width="stretch")
+        if "_curva_status" in st.session_state:
+            nivel, msg = st.session_state["_curva_status"]
+            {"ok": st.success, "aviso": st.warning,
+             "erro": st.error}[nivel](msg)
         modo_cessao = st.radio(
             "Como informar a taxa de cessão?",
             ["Taxa fixa (% a.m.)", "CDI + spread (a.a.)"],
@@ -360,14 +403,19 @@ with st.sidebar:
             "Prazo médio dos recebíveis (dias)", min_value=1, max_value=720,
             step=5, key="prazo_dias", help=ajuda("prazo_medio")), 90)
         st.caption(f"≈ {prazo_dias/30:.2f} meses")
-        revolv = st.slider("Revolvência (meses)", 0, 60, key="revolv",
-                           help=ajuda("revolvencia"))
-        st.session_state["rampa"] = min(st.session_state.get("rampa", 0), revolv)
+        carencia = st.slider("Carência (meses)", 0, 60, key="carencia",
+                             help=ajuda("carencia"))
+        prazo_medio_meses_atual = prazo_dias / 30
+        if prazo_medio_meses_atual > 0:
+            ciclos_revolv = carencia / prazo_medio_meses_atual
+            st.caption(
+                f"≈ {ciclos_revolv:.1f}x de revolvência possível nesse "
+                f"período, dado o prazo médio da carteira "
+                f"({prazo_medio_meses_atual:.2f} meses).")
+        st.session_state["rampa"] = min(st.session_state.get("rampa", 0), carencia)
         rampa = st.slider(
-            "Rampa de integralização (meses)", 0, max(revolv, 0),
+            "Rampa de integralização (meses)", 0, max(carencia, 0),
             key="rampa", help=ajuda("rampa"))
-        carencia = st.slider("Carência antes da amortização (meses)", 0, 24,
-                             key="carencia", help=ajuda("carencia"))
         prazo_maximo = int(_num(st.number_input(
             "Prazo máximo do fundo (meses) — 0 = sem teto", min_value=0,
             step=1, key="prazo_maximo",
@@ -443,11 +491,11 @@ with st.expander("📐 Equivalência CDI+ ↔ pré por classe (dado o CDI acima)
               "da sua mesa, se tiver.")
 
 e = Estrutura(pl_total=pl, classes=classes, taxa_cessao_am=t_ces,
-              prazo_medio_meses=prazo_dias / 30, meses_revolvencia=revolv,
+              prazo_medio_meses=prazo_dias / 30, meses_carencia=carencia,
               inadimplencia_am=inad, prepagamento_am=prep, recuperacao=recup,
               custos_aa=custos, stress=stress,
               sub_minima=(sub_min_pct / 100) if sub_min_pct > 0 else None,
-              meses_rampa=rampa, meses_carencia=carencia,
+              meses_rampa=rampa,
               custo_inicial=float(custo_inicial or 0),
               custo_inicial_meses=int(custo_inicial_meses or 1),
               prazo_maximo_meses=(int(prazo_maximo)
@@ -499,8 +547,8 @@ if orig_ativo:
         params_completos = dict(
             pl=pl, cdi_aa=cdi, ajuste_curva=ajuste_curva,
             t_ces=round(t_ces * 100, 4), modo_cessao=modo_cessao,
-            prazo_dias=prazo_dias, revolv=revolv, rampa=rampa,
-            carencia=carencia, custo_inicial=custo_inicial,
+            prazo_dias=prazo_dias, rampa=rampa, carencia=carencia,
+            custo_inicial=custo_inicial,
             custo_inicial_meses=custo_inicial_meses,
             prazo_maximo=prazo_maximo,
             prep=round(prep * 100, 4), inad=round(inad * 100, 4),
@@ -525,7 +573,7 @@ if orig_ativo:
 if not res["todas_integras"]:
     piores = pc[~pc["integra"]]["classe"].tolist()
     st.error(f"Classe(s) com perda neste cenário: {', '.join(piores)}. "
-             "Aumente a subordinação, reduza a revolvência ou melhore a "
+             "Aumente a subordinação, reduza a carência ou melhore a "
              "taxa de cessão.")
 elif be and be < 3:
     st.warning(f"{classes[0].nome} íntegra, mas o colchão é curto: rompe a "
@@ -545,12 +593,8 @@ with g1:
     if e.meses_rampa:
         fig.add_vline(x=e.meses_rampa, line_dash="dash", line_color="#999",
                       annotation_text="100% chamado")
-    fig.add_vline(x=e.meses_revolvencia, line_dash="dot",
-                  annotation_text="fim da revolvência")
-    if e.meses_carencia:
-        fig.add_vline(x=e.meses_revolvencia + e.meses_carencia,
-                      line_dash="dot", line_color="#B33A3A",
-                      annotation_text="início da amortização")
+    fig.add_vline(x=e.meses_carencia, line_dash="dot",
+                  line_color="#B33A3A", annotation_text="início da amortização")
     fig.update_layout(title="Carteira e saldos por classe (R$ mi)",
                       xaxis_title="Mês", height=380,
                       legend=dict(orientation="h", y=-0.3))
@@ -713,7 +757,7 @@ if origs:
 
     fp_atual = (round(pl), tuple((c.nome, round(c.pct, 4), round(c.taxa_am, 6))
                                  for c in classes), round(t_ces, 6),
-               prazo_dias, revolv, rampa, carencia, round(inad, 6),
+               prazo_dias, rampa, carencia, round(inad, 6),
                round(stress, 2), round(custo_inicial, 2), custo_inicial_meses,
                prazo_maximo)
     mc_res = st.session_state.get("mc_resultado")
@@ -753,10 +797,10 @@ if origs:
     if ce.button("Aprovar →", width="stretch",
                  disabled=not res["todas_integras"]):
         params = dict(pl_total=pl, taxa_cessao_am=t_ces,
-                      prazo_medio_meses=prazo_dias / 30, meses_revolvencia=revolv,
+                      prazo_medio_meses=prazo_dias / 30, meses_carencia=carencia,
                       inadimplencia_am=inad, prepagamento_am=prep,
                       recuperacao=recup, custos_aa=custos, cdi_aa=cdi,
-                      stress=stress, meses_rampa=rampa, meses_carencia=carencia,
+                      stress=stress, meses_rampa=rampa,
                       sub_minima=(sub_min_pct / 100) if sub_min_pct > 0 else None,
                       custo_inicial=custo_inicial,
                       custo_inicial_meses=custo_inicial_meses,
@@ -772,8 +816,8 @@ if origs:
         params_completos = dict(
             pl=pl, cdi_aa=cdi, ajuste_curva=ajuste_curva,
             t_ces=round(t_ces * 100, 4), modo_cessao=modo_cessao,
-            prazo_dias=prazo_dias, revolv=revolv, rampa=rampa,
-            carencia=carencia, custo_inicial=custo_inicial,
+            prazo_dias=prazo_dias, rampa=rampa, carencia=carencia,
+            custo_inicial=custo_inicial,
             custo_inicial_meses=custo_inicial_meses,
             prazo_maximo=prazo_maximo,
             prep=round(prep * 100, 4), inad=round(inad * 100, 4),

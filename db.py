@@ -108,6 +108,13 @@ CREATE TABLE IF NOT EXISTS cache_indices (
     data_referencia TEXT,        -- data a que o valor se refere (ex.: do Bacen)
     atualizado_em TEXT           -- quando o app buscou/gravou este valor
 );
+
+CREATE TABLE IF NOT EXISTS cache_curva_pre (
+    chave TEXT PRIMARY KEY,      -- ex.: 'PRE' (código da curva na B3)
+    data_referencia TEXT,        -- pregão a que a curva se refere
+    pontos_json TEXT,            -- lista [[dias_corridos, taxa], ...]
+    atualizado_em TEXT
+);
 """
 
 ETAPAS_FUNIL = [
@@ -507,6 +514,39 @@ def obter_cache_indice(chave: str) -> dict | None:
             "SELECT valor, data_referencia, atualizado_em FROM cache_indices "
             "WHERE chave=?", (chave,)).fetchone()
         return dict(row) if row else None
+
+
+# ------------------------------------------------------------ cache_curva_pre
+
+def salvar_cache_curva(chave: str, data_referencia: str, pontos: list):
+    """Persiste a curva do dia (lista de [dias_corridos, taxa]) — sobrevive
+    a restart do container, serve de fallback se a B3 estiver fora do ar."""
+    import json
+    agora = datetime.now().isoformat(timespec="seconds")
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO cache_curva_pre (chave, data_referencia, "
+            "pontos_json, atualizado_em) VALUES (?,?,?,?) "
+            "ON CONFLICT(chave) DO UPDATE SET "
+            "data_referencia=excluded.data_referencia, "
+            "pontos_json=excluded.pontos_json, "
+            "atualizado_em=excluded.atualizado_em",
+            (chave, data_referencia, json.dumps(pontos), agora))
+
+
+def obter_cache_curva(chave: str) -> dict | None:
+    """Retorna {'data_referencia', 'pontos', 'atualizado_em'} da última
+    curva persistida, ou None se nunca foi gravada."""
+    import json
+    with _conn() as c:
+        row = c.execute(
+            "SELECT data_referencia, pontos_json, atualizado_em "
+            "FROM cache_curva_pre WHERE chave=?", (chave,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["pontos"] = json.loads(d.pop("pontos_json"))
+        return d
 
 
 # ---------------------------------------------------------------- seed

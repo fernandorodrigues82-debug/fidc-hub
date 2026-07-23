@@ -115,7 +115,7 @@ def gerar_memorando(*, nome_fundo: str, originador: dict, estrutura,
            f"Taxa de cessão: {estrutura.taxa_cessao_am*100:.2f}% a.m.  ·  "
            f"Prazo médio dos recebíveis: "
            f"{estrutura.prazo_medio_meses*30:.0f} dias  ·  "
-           f"Revolvência: {estrutura.meses_revolvencia} meses")
+           f"Carência: {estrutura.meses_carencia} meses")
     if estrutura.prazo_maximo_meses:
         _p(doc, f"Prazo máximo do fundo: {estrutura.prazo_maximo_meses} "
                "meses — se a amortização natural não terminar até lá, a "
@@ -134,11 +134,6 @@ def gerar_memorando(*, nome_fundo: str, originador: dict, estrutura,
                "meses — cada classe só passa a render sobre o capital já "
                "efetivamente chamado, evitando carry negativo sobre "
                "capital captado e ainda não investido.")
-    if estrutura.meses_carencia:
-        _p(doc, f"Carência de {estrutura.meses_carencia} meses entre o "
-               "fim da revolvência e o início da amortização — o fundo "
-               "para de reinvestir e acumula caixa antes de começar a "
-               "pagar principal às cotas.")
     cab = ["Classe", "% do PL", "Taxa-alvo (a.m.)", "Ordem de senioridade"]
     linhas = [[c.nome, f"{c.pct*100:.1f}%",
               "residual" if c.residual else f"{c.taxa_am*100:.2f}%",

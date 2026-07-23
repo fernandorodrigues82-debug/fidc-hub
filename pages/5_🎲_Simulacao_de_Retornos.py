@@ -36,7 +36,7 @@ with st.expander("Estrutura em uso", expanded=False):
     st.caption(f"PL R$ {base.pl_total/1e6:,.0f} mi · cessão "
               f"{base.taxa_cessao_am*100:.2f}% a.m. · inadimplência base "
               f"{base.inadimplencia_am*100:.2f}% a.m. · stress "
-              f"{base.stress:.1f}x · revolvência {base.meses_revolvencia} m"
+              f"{base.stress:.1f}x · carência {base.meses_carencia} m"
               + (f" · gatilho sub. mín. {base.sub_minima*100:.0f}%"
                  if base.sub_minima else ""))
 
@@ -111,7 +111,7 @@ if st.button("🎲 Rodar simulação de retornos", type="primary",
                                      round(c.taxa_am, 6))
                                     for c in base.classes),
         round(base.taxa_cessao_am, 6), base.prazo_medio_meses,
-        base.meses_revolvencia, base.meses_rampa, base.meses_carencia,
+        base.meses_carencia, base.meses_rampa,
         round(base.inadimplencia_am, 6),
         round(base.stress, 2))
 

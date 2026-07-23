@@ -4,16 +4,14 @@ Estrutura de capital genérica: lista de classes ordenadas por senioridade
 (1ª = mais sênior). A última classe é sempre a residual (júnior/equity):
 não tem taxa-alvo e recebe o que sobra depois de todas as outras.
 
-Cascata mensal, em até quatro fases:
+Cascata mensal, em até três fases:
 1. Rampa (opcional): o capital é chamado (integralizado) progressivamente
    em vez de 100% no mês 1 — cada classe só passa a render sobre o que já
    foi chamado, evitando "carry" negativo de capital captado e parado.
-2. Revolvência: caixa (coleta + capital recém-chamado) recompra direitos
-   creditórios.
-3. Carência (opcional): reinvestimento para — o fundo não compra mais
-   recebíveis — mas a amortização ainda não começou; o caixa apenas se
-   acumula como reserva.
-4. Amortização: pagamento SEQUENCIAL — cada classe só recebe depois de a
+2. Carência: período sem amortização, em que o caixa (coleta + capital
+   recém-chamado) recompra direitos creditórios (revolvência) em vez de
+   pagar principal às cotas.
+3. Amortização: pagamento SEQUENCIAL — cada classe só recebe depois de a
    anterior estar 100% amortizada. As classes não-residuais acumulam a
    taxa-alvo sobre o saldo já chamado.
 
@@ -45,7 +43,8 @@ class Estrutura:
     ])
     taxa_cessao_am: float = 0.022
     prazo_medio_meses: float = 3.0     # aceita fração (ex.: 40 dias = 1,33)
-    meses_revolvencia: int = 24
+    meses_carencia: int = 24    # período sem amortização: o caixa revolve
+    # (recompra DCs) o tempo todo até aqui; depois começa a amortização
     inadimplencia_am: float = 0.008
     prepagamento_am: float = 0.01
     recuperacao: float = 0.30
@@ -55,8 +54,6 @@ class Estrutura:
     # (ativos - dívida sênior/mez) / ativos. Se furar antes da amortização,
     # dispara evento de avaliação: para de reinvestir e amortiza antecipado.
     meses_rampa: int = 0        # meses até 100% do PL estar chamado/investido
-    meses_carencia: int = 0     # meses entre o fim da revolvência e o
-    # início da amortização, sem reinvestir nem amortizar (só acumula caixa)
     custo_inicial: float = 0.0       # custo único (R$) — ex.: taxa de distribuição
     custo_inicial_meses: int = 1     # em quantos meses diferir esse custo
     prazo_maximo_meses: int | None = None  # teto legal do fundo: força
@@ -71,11 +68,11 @@ class Estrutura:
         if not self.classes[-1].residual:
             raise ValueError("A última classe deve ser a residual "
                              "(júnior).")
-        if self.meses_rampa and self.meses_rampa > self.meses_revolvencia:
+        if self.meses_rampa and self.meses_rampa > self.meses_carencia:
             raise ValueError("A rampa de integralização não pode ser mais "
-                             "longa que a revolvência "
+                             "longa que a carência "
                              f"({self.meses_rampa} > "
-                             f"{self.meses_revolvencia} meses).")
+                             f"{self.meses_carencia} meses).")
         if self.custo_inicial_meses < 1:
             raise ValueError("custo_inicial_meses deve ser pelo menos 1.")
 
@@ -94,8 +91,7 @@ class Resultado:
 def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
     """vetor_inadimplencia: opcional, taxa de perda por mês (sobrepõe a
     inadimplência base x stress — usado pelo Monte Carlo)."""
-    n_natural = int(round(e.meses_revolvencia + e.meses_carencia
-                         + e.prazo_medio_meses * 3 + 6))
+    n_natural = int(round(e.meses_carencia + e.prazo_medio_meses * 3 + 6))
     n = min(n_natural, e.prazo_maximo_meses) if e.prazo_maximo_meses else n_natural
     d = min(0.95, e.inadimplencia_am * e.stress)
     q = 1.0 / e.prazo_medio_meses
@@ -162,28 +158,25 @@ def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
         divida = sum(saldos)
         indice_sub = (ativos - divida) / ativos if ativos > 1e-6 else 0.0
 
-        fase_natural = ("revolvência" if m <= e.meses_revolvencia else
-                        "carência" if m <= e.meses_revolvencia + e.meses_carencia
-                        else "amortização")
+        fase_natural = ("carência" if m <= e.meses_carencia else
+                        "amortização")
         em_rampa = bool(e.meses_rampa and m <= e.meses_rampa)
         if (gatilho_mes is None and e.sub_minima is not None and not em_rampa
-                and fase_natural in ("revolvência", "carência")
+                and fase_natural == "carência"
                 and indice_sub < e.sub_minima):
             gatilho_mes = m  # evento de avaliação: amortização antecipada
         forcar_fim = (m == n)
         fase = ("amortização" if (gatilho_mes is not None or forcar_fim)
                else fase_natural)
-        if e.meses_rampa and m <= e.meses_rampa and fase == "revolvência":
+        if e.meses_rampa and m <= e.meses_rampa and fase == "carência":
             fase = "rampa"
 
         amort = [0.0] * len(pagaveis)
         amort_res = 0.0
 
-        if fase in ("rampa", "revolvência") and not forcar_fim:
+        if fase in ("rampa", "carência") and not forcar_fim:
             carteira += caixa
             caixa = 0.0
-        elif fase == "carência" and not forcar_fim:
-            pass  # não reinveste nem amortiza: caixa só se acumula
         else:  # amortização, ou m==n forçando liquidação (mesmo fora da
               # fase de amortização, se o teto de prazo do fundo cortar antes)
             if forcar_fim:  # fim do horizonte: liquida carteira remanescente
@@ -353,8 +346,7 @@ def montecarlo(e: Estrutura, n_sims: int = 500, vol: float = 0.5,
     com percentis de TIR e probabilidades de perda.
     """
     rng = np.random.default_rng(seed)
-    n_natural = int(round(e.meses_revolvencia + e.meses_carencia
-                         + e.prazo_medio_meses * 3 + 6))
+    n_natural = int(round(e.meses_carencia + e.prazo_medio_meses * 3 + 6))
     n = min(n_natural, e.prazo_maximo_meses) if e.prazo_maximo_meses else n_natural
     base = e.inadimplencia_am * e.stress
 
@@ -394,15 +386,28 @@ def montecarlo(e: Estrutura, n_sims: int = 500, vol: float = 0.5,
 def estrutura_de_params(params: dict) -> Estrutura:
     """Reconstrói a Estrutura a partir do dict salvo no deal aprovado —
     usada pelo painel consolidado e pelo rating para recalcular métricas
-    sem duplicar a definição da estrutura."""
+    sem duplicar a definição da estrutura.
+
+    Compatibilidade: simulações salvas antes da fusão revolvência+carência
+    em um único conceito tinham 'meses_revolvencia' (fase ativa) e
+    'meses_carencia' (janela morta, sem revolver nem amortizar) como
+    campos separados. A presença de 'meses_revolvencia' no dict indica
+    formato antigo -- somamos os dois para virar a carência única de
+    hoje (o período total ganha o comportamento novo: revolve o tempo
+    todo em vez de ficar parado no trecho final)."""
     classes = [Classe(c["nome"], c["pct"], c.get("taxa_am", 0.0),
                       residual=c.get("residual", False))
               for c in params["classes"]]
+    if "meses_revolvencia" in params:
+        meses_carencia = (params.get("meses_revolvencia", 24)
+                         + params.get("meses_carencia", 0))
+    else:
+        meses_carencia = params.get("meses_carencia", 24)
     return Estrutura(
         pl_total=params["pl_total"], classes=classes,
         taxa_cessao_am=params["taxa_cessao_am"],
         prazo_medio_meses=params["prazo_medio_meses"],
-        meses_revolvencia=params["meses_revolvencia"],
+        meses_carencia=meses_carencia,
         inadimplencia_am=params["inadimplencia_am"],
         prepagamento_am=params.get("prepagamento_am", 0.01),
         recuperacao=params.get("recuperacao", 0.30),
@@ -410,7 +415,6 @@ def estrutura_de_params(params: dict) -> Estrutura:
         stress=params.get("stress", 1.0),
         sub_minima=params.get("sub_minima"),
         meses_rampa=params.get("meses_rampa", 0),
-        meses_carencia=params.get("meses_carencia", 0),
         custo_inicial=params.get("custo_inicial", 0.0),
         custo_inicial_meses=params.get("custo_inicial_meses", 1),
         prazo_maximo_meses=params.get("prazo_maximo_meses"))

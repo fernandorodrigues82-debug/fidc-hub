@@ -14,7 +14,7 @@ PARAMS_SENSIVEIS = {
     "taxa_cessao_am": ("Taxa de cessão", 0.15),       # nome, variação relativa
     "inadimplencia_am": ("Inadimplência base", 0.30),
     "prazo_medio_meses": ("Prazo médio", 0.30),
-    "meses_revolvencia": ("Revolvência", 0.30),
+    "meses_carencia": ("Carência", 0.30),
     "recuperacao": ("Taxa de recuperação", 0.30),
     "custos_aa": ("Custos do fundo", 0.30),
     "prepagamento_am": ("Pré-pagamento", 0.30),
@@ -46,7 +46,7 @@ def tornado(estrutura, alvo: str = "tir_sub") -> pd.DataFrame:
             continue
         baixo = valor_base * (1 - delta)
         alto = valor_base * (1 + delta)
-        if campo == "meses_revolvencia":
+        if campo == "meses_carencia":
             baixo, alto = max(1, round(baixo)), max(1, round(alto))
 
         e_baixo = replace(estrutura, **{campo: baixo})

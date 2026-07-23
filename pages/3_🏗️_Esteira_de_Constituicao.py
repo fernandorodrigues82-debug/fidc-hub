@@ -43,7 +43,9 @@ c1, c2, c3, c4 = st.columns(4)
 c1.metric("PL alvo (R$ mi)", f"{params.get('pl_total', 0)/1e6:,.0f}")
 c2.metric("Classes de cotas", len(classes))
 c3.metric("Subordinação", f"{sub_pct*100:.0f}%")
-c4.metric("Revolvência", f"{params.get('meses_revolvencia', 0)} meses")
+_carencia_total = (params.get("meses_revolvencia", 0) + params.get("meses_carencia", 0)
+                  if "meses_revolvencia" in params else params.get("meses_carencia", 0))
+c4.metric("Carência", f"{_carencia_total} meses")
 if classes:
     st.caption("Estrutura aprovada: " + " → ".join(
         f"{c['nome']} {c['pct']*100:.0f}%" for c in classes))

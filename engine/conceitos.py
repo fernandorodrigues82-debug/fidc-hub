@@ -79,15 +79,6 @@ CONCEITOS = {
         efeito="Prazos curtos giram a carteira mais vezes na revolvência "
                "(mais receita, mais reinvestimento) e encurtam a amortização.",
     ),
-    "revolvencia": dict(
-        titulo="Período de revolvência",
-        resumo="Fase em que o caixa recebido é reinvestido na compra de novos "
-               "direitos creditórios em vez de amortizar cotas.",
-        faixa="Fundos fechados costumam ter 2–5 anos de revolvência antes da "
-               "amortização programada.",
-        efeito="Mais revolvência = mais tempo capturando spread (melhor para "
-               "a sub), mas também mais tempo exposto à inadimplência.",
-    ),
     "inadimplencia": dict(
         titulo="Inadimplência (perda esperada)",
         resumo="Fração dos valores que vencem e não são pagos. No modelo, "
@@ -170,17 +161,19 @@ CONCEITOS = {
                "(e só passa a render) na medida em que é deployado.",
     ),
     "carencia": dict(
-        titulo="Carência antes da amortização",
-        resumo="Período entre o fim da revolvência e o início da "
-               "amortização em que o fundo já parou de reinvestir, mas "
-               "ainda não começou a pagar principal às cotas — o caixa "
-               "recebido nesse meio-tempo só se acumula como reserva.",
-        faixa="0 a 6 meses é comum, usado para formar um colchão de caixa "
-              "antes de iniciar os pagamentos programados às cotas.",
-        efeito="Adia o início dos pagamentos de principal, mas os aumenta "
-               "quando começam (mais caixa acumulado). Não afeta a taxa-"
-               "alvo, que continua acumulando sobre o saldo das classes "
-               "durante toda a carência.",
+        titulo="Carência",
+        resumo="Período sem amortização de cotas: o caixa recebido é "
+               "reinvestido na compra de novos direitos creditórios "
+               "(revolvência) o tempo todo, em vez de pagar principal. "
+               "A amortização começa logo depois que a carência termina.",
+        faixa="Fundos fechados costumam ter 2 a 5 anos de carência antes "
+              "da amortização programada.",
+        efeito="Mais carência = mais tempo capturando spread via "
+               "revolvência (melhor para a subordinação), mas também mais "
+               "tempo exposto à inadimplência. Quantos ciclos de "
+               "revolvência cabem no período depende do prazo médio dos "
+               "recebíveis da carteira — carência de 12 meses com "
+               "recebíveis de 2 meses de prazo médio permite ~6 ciclos.",
     ),
     "custo_inicial": dict(
         titulo="Custo inicial one-off",

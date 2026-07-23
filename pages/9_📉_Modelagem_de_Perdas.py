@@ -4,6 +4,7 @@ import streamlit as st
 
 import db
 from engine.cdi_api import buscar_cdi_atual
+from engine.curva_pre import taxa_pre_no_prazo
 from engine.conceitos import ajuda
 from engine.perda_bullet import (ParametrosBullet, PoolRisco, calcular_cenario,
                                  cenario_sistemico, choque_idiossincratico,
@@ -48,6 +49,31 @@ def _atualizar_cdi():
         st.session_state["_cdi_status_perdas"] = (
             "erro", f"Não foi possível buscar o CDI ({r['erro']}). Ajuste "
                     "manualmente.")
+
+
+def _buscar_curva_pre_perdas():
+    """Callback do botão 'Buscar' (ajuste de curva). Este modelo é bullet
+    (cessão única pelo prazo do fundo inteiro) -- usa prazo_perdas (em
+    meses, convertido a dias) como o prazo de referência na curva, já que
+    não há aqui um campo separado de prazo médio dos recebíveis."""
+    prazo_meses_atual = float(st.session_state.get("prazo_perdas", 12))
+    cdi_atual = float(st.session_state.get("cdi_aa_perdas", 12.0))
+    r = taxa_pre_no_prazo(prazo_meses_atual * 30)
+    if not r["ok"]:
+        st.session_state["_curva_status_perdas"] = (
+            "erro", f"Não foi possível buscar a curva da B3 ({r['erro']}). "
+                    "Ajuste manualmente.")
+        return
+    ajuste = round(r["taxa"] * 100 - cdi_atual, 2)
+    st.session_state["ajuste_curva_perdas"] = ajuste
+    fonte = ("curva de " + r["data_curva"] if r["fonte"] == "b3"
+            else "última curva salva, B3 indisponível agora")
+    nivel = "ok" if r["fonte"] == "b3" else "aviso"
+    msg = (f"Pré B3 em {prazo_meses_atual*30:.0f} dias: {r['taxa']*100:.2f}% "
+          f"aa ({fonte}) → ajuste de {ajuste:+.2f} p.p. sobre o CDI aplicado.")
+    if r.get("aviso"):
+        msg += " " + r["aviso"]
+    st.session_state["_curva_status_perdas"] = (nivel, msg)
 
 
 # ---------------------------------------------------------- originador (opcional)
@@ -153,7 +179,9 @@ c9, c10, c11 = st.columns(3)
 ajuste_curva = _num(c9.number_input(
     "Ajuste de curva (p.p. aa)", step=0.10, key="ajuste_curva_perdas",
     help="Prêmio/desconto sobre o CDI projetado para aproximar a curva de "
-         "juros futura real, em vez de assumir CDI constante."), 0.0) / 100
+         "juros futura real, em vez de assumir CDI constante. Pode "
+         "digitar direto ou clicar em 'Buscar curva B3' abaixo para puxar "
+         "da curva Pré real, interpolada no prazo do fundo."), 0.0) / 100
 spread_sr = _num(c10.number_input(
     "Spread Sênior sobre CDI (p.p. aa)", step=0.25, value=2.0,
     key="spread_sr_perdas",
@@ -163,6 +191,11 @@ spread_meza = _num(c11.number_input(
     "Spread Mezanino sobre CDI (p.p. aa)", step=0.25, value=3.0,
     key="spread_meza_perdas",
     help="SÓ o spread — mesma lógica da Sênior."), 3.0) / 100
+st.button("🔄 Buscar curva B3 (pré no prazo do fundo)", key="btn_curva_pre_perdas",
+         on_click=_buscar_curva_pre_perdas)
+if "_curva_status_perdas" in st.session_state:
+    nivel, msg = st.session_state["_curva_status_perdas"]
+    {"ok": st.success, "aviso": st.warning, "erro": st.error}[nivel](msg)
 cdi_efetivo_aa = cdi_aa / 100 + ajuste_curva
 st.caption(
     f"Pré-equivalente (dado o CDI acima): Sênior ≈ "

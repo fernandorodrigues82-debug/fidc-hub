@@ -13,7 +13,7 @@ GRUPOS = {
     "Estrutura de capital": ["pl_total", "senior", "mezanino", "junior"],
     "Taxas e retorno": ["taxa_cessao", "taxa_senior", "taxa_mezanino", "tir",
                        "ajuste_curva"],
-    "Carteira e prazos": ["prazo_medio", "revolvencia", "rampa", "carencia",
+    "Carteira e prazos": ["prazo_medio", "carencia", "rampa",
                          "prazo_maximo", "prepagamento"],
     "Risco e proteção": ["inadimplencia", "recuperacao", "custos",
                         "custo_inicial", "stress", "sub_minima"],

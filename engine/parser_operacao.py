@@ -8,7 +8,7 @@ Dois níveis:
 
 Sempre retorna: (parametros: dict, entendimentos: list[str])
 Chaves possíveis: pl_total, pct_senior, pct_mezanino, cdi_aa, spread_senior,
-spread_mezanino, taxa_cessao_am, prazo_medio_meses, meses_revolvencia,
+spread_mezanino, taxa_cessao_am, prazo_medio_meses, meses_carencia,
 inadimplencia_am_pct.
 """
 
@@ -92,16 +92,18 @@ def interpretar_local(texto: str):
             p["prazo_medio_meses"] = max(1, round(_f(m.group(1))))
             log.append(f"prazo médio {m.group(1)} meses")
 
-    # revolvência: meses ou anos
-    m = re.search(rf"revolv[eê]ncia\D{{0,10}}{NUM}\s*anos?", t)
+    # carência/revolvência: meses ou anos (o usuário pode falar qualquer um
+    # dos dois termos -- carência é o período sem amortização, durante o
+    # qual o fundo revolve; mapeiam para o mesmo parâmetro)
+    m = re.search(rf"(?:car[eê]ncia|revolv[eê]ncia)\D{{0,10}}{NUM}\s*anos?", t)
     if m:
-        p["meses_revolvencia"] = int(_f(m.group(1)) * 12)
-        log.append(f"revolvência {m.group(1)} anos")
+        p["meses_carencia"] = int(_f(m.group(1)) * 12)
+        log.append(f"carência {m.group(1)} anos")
     else:
-        m = re.search(rf"revolv[eê]ncia\D{{0,10}}{NUM}\s*m", t)
+        m = re.search(rf"(?:car[eê]ncia|revolv[eê]ncia)\D{{0,10}}{NUM}\s*m", t)
         if m:
-            p["meses_revolvencia"] = int(_f(m.group(1)))
-            log.append(f"revolvência {m.group(1)} meses")
+            p["meses_carencia"] = int(_f(m.group(1)))
+            log.append(f"carência {m.group(1)} meses")
 
     # inadimplência / perda
     m = re.search(rf"(?:inadimpl[eê]ncia|perda)\D{{0,25}}{NUM}\s*%", t)
@@ -116,7 +118,7 @@ PROMPT_LLM = """Extraia parâmetros de estruturação de FIDC do texto do usuár
 Responda APENAS um JSON (sem markdown) com as chaves que conseguir extrair:
 pl_total (número em R$), pct_senior (0-1), pct_mezanino (0-1), cdi_aa (% a.a.),
 spread_senior (% a.a.), spread_mezanino (% a.a.), taxa_cessao_am (0-1 a.m.),
-prazo_medio_meses (int), meses_revolvencia (int), inadimplencia_am_pct (%).
+prazo_medio_meses (int), meses_carencia (int), inadimplencia_am_pct (%).
 Se o texto der subordinação, derive pct_senior = 1 - sub - mezanino."""
 
 
