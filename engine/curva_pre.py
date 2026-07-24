@@ -34,27 +34,22 @@ from datetime import date, timedelta
 import streamlit as st
 
 CURVA_PADRAO = "PRE"
-
-
-def _ultimo_dia_util_provavel() -> date:
-    """Aproximação simples (não usa calendário de feriados): o pregão mais
-    recente que provavelmente já fechou. A biblioteca pyettj valida o dia
-    de verdade (feriados/fins de semana) e levanta erro se não houver
-    pregão -- aqui só evitamos pedir um fim de semana óbvio de cara."""
-    d = date.today()
-    while d.weekday() >= 5:  # sábado=5, domingo=6
-        d -= timedelta(days=1)
-    return d
+MAX_DIAS_RETROATIVOS = 10  # cobre feriados prolongados/fins de semana longos
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
 def _buscar_curva_pre_api(data_str: str):
     """Busca a curva PRE completa da B3 para uma data. Levanta exceção em
-    qualquer falha -- quem chama decide o fallback."""
+    qualquer falha -- quem chama decide o fallback. Não cacheia falhas
+    (st.cache_data só memoiza retornos bem-sucedidos), então tentar de
+    novo a mesma data mais tarde no dia (ex.: arquivo ainda não publicado
+    pela manhã) funciona sem precisar limpar cache."""
     import pyettj.ettj as ettj
     df = ettj.get_ettj(data_str, curva=CURVA_PADRAO)
     if df is None or df.empty:
-        raise ValueError("B3 retornou curva vazia para a data")
+        raise ValueError(f"Sem dados para {data_str} (arquivo vazio — fim "
+                         "de semana, feriado, ou pregão ainda não "
+                         "publicado)")
     pontos = sorted(
         (int(row["dias_corridos"]), float(row["taxa"]))
         for _, row in df.iterrows()
@@ -86,29 +81,52 @@ def taxa_pre_no_prazo(dias_corridos: float, data: date | None = None) -> dict:
     """Interface pública: busca a curva PRE da B3 (com cache) e devolve a
     taxa interpolada no prazo pedido.
 
+    Caminha para trás dia a dia a partir da data pedida (ou hoje) até achar
+    um pregão com dado publicado — cobre o caso óbvio do dia corrente ainda
+    não ter arquivo (pregão fecha e o boletim só sai depois), além de fins
+    de semana e feriados, sem exigir que quem chama saiba de calendário.
+
     Sucesso: {'ok': True, 'taxa': float (% a.a.), 'data_curva': str,
-              'fonte': 'b3' | 'cache_local'}
+              'fonte': 'b3' | 'cache_local', 'aviso': str opcional}
     Falha:   {'ok': False, 'erro': str}
     """
-    data_alvo = data or _ultimo_dia_util_provavel()
-    data_str = data_alvo.strftime("%d/%m/%Y")
-    try:
-        pontos, refdate = _buscar_curva_pre_api(data_str)
-        taxa = _interpolar(pontos, dias_corridos)
-        import db
-        db.salvar_cache_curva(CURVA_PADRAO, refdate, pontos)
-        return {"ok": True, "taxa": taxa, "data_curva": refdate, "fonte": "b3"}
-    except Exception as e:  # noqa: BLE001 — rede, parsing, feriado, etc.
-        import db
-        cache = db.obter_cache_curva(CURVA_PADRAO)
-        if cache:
+    data_pedida = data or date.today()
+    d = data_pedida
+    ultimo_erro = None
+    for _ in range(MAX_DIAS_RETROATIVOS):
+        if d.weekday() < 5:  # só tenta dias úteis (seg=0 ... sex=4)
             try:
-                taxa = _interpolar(cache["pontos"], dias_corridos)
-                return {"ok": True, "taxa": taxa,
-                       "data_curva": cache["data_referencia"],
-                       "fonte": "cache_local",
-                       "aviso": f"B3 indisponível ({e}); usando última "
-                               f"curva salva ({cache['atualizado_em']})."}
-            except Exception:
-                pass
-        return {"ok": False, "erro": str(e)}
+                pontos, refdate = _buscar_curva_pre_api(d.strftime("%d/%m/%Y"))
+                taxa = _interpolar(pontos, dias_corridos)
+                import db
+                db.salvar_cache_curva(CURVA_PADRAO, refdate, pontos)
+                resultado = {"ok": True, "taxa": taxa, "data_curva": refdate,
+                            "fonte": "b3"}
+                if d != data_pedida:
+                    resultado["aviso"] = (
+                        f"Sem pregão em {data_pedida.strftime('%d/%m/%Y')} "
+                        f"ainda (fim de semana, feriado, ou boletim do dia "
+                        f"não publicado) — usando o último disponível, "
+                        f"{refdate}.")
+                return resultado
+            except Exception as e:  # noqa: BLE001
+                ultimo_erro = e
+        d -= timedelta(days=1)
+
+    import db
+    cache = db.obter_cache_curva(CURVA_PADRAO)
+    if cache:
+        try:
+            taxa = _interpolar(cache["pontos"], dias_corridos)
+            return {"ok": True, "taxa": taxa,
+                   "data_curva": cache["data_referencia"],
+                   "fonte": "cache_local",
+                   "aviso": f"B3 indisponível nos últimos "
+                           f"{MAX_DIAS_RETROATIVOS} dias úteis "
+                           f"({ultimo_erro}); usando última curva salva "
+                           f"({cache['atualizado_em']})."}
+        except Exception:
+            pass
+    return {"ok": False,
+           "erro": f"Sem pregão disponível nos últimos "
+                   f"{MAX_DIAS_RETROATIVOS} dias úteis ({ultimo_erro})"}
