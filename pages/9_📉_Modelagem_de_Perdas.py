@@ -414,21 +414,27 @@ st.subheader("Ponte de valor por cenário")
 abas = st.tabs([c["nome"] for c in cenarios])
 for aba, c in zip(abas, cenarios):
     with aba:
+        valores_mi = [params.pl_inicial / 1e6, c["rentabilidade"] / 1e6,
+                     -c["perdas_valor"] / 1e6, -c["custo_fundo"] / 1e6,
+                     -c["remuneracao_total"] / 1e6, c["pl_final"] / 1e6]
+        textos = [f"{v:+,.1f}" if i not in (0, 5) else f"{v:,.1f}"
+                 for i, v in enumerate(valores_mi)]
         fig = go.Figure(go.Waterfall(
             orientation="v",
             measure=["absolute", "relative", "relative", "relative", "relative", "total"],
             x=["PL Inicial", "Rentabilidade", "Perdas", "Custos FIDC",
                "Remuneração Sr+Meza", "PL Final"],
-            y=[params.pl_inicial / 1e6, c["rentabilidade"] / 1e6,
-               -c["perdas_valor"] / 1e6, -c["custo_fundo"] / 1e6,
-               -c["remuneracao_total"] / 1e6, 0],
+            y=valores_mi[:-1] + [0],  # measure "total" recalcula o ultimo sozinho
+            text=textos, textposition="outside",
+            texttemplate="%{text}",
             connector={"line": {"color": "rgba(100,100,100,0.4)"}},
             decreasing={"marker": {"color": "#B23A48"}},
             increasing={"marker": {"color": "#0B5563"}},
             totals={"marker": {"color": "#1C2B2D"}},
         ))
-        fig.update_layout(height=380, showlegend=False,
-                          title=f"{c['nome']} — {_rotulo_severidade(c)} (R$ mi)")
+        fig.update_layout(height=420, showlegend=False,
+                          title=f"{c['nome']} — {_rotulo_severidade(c)} (R$ mi)",
+                          margin=dict(t=80))
         st.plotly_chart(fig, width="stretch")
         m1, m2, m3 = st.columns(3)
         m1.metric("Sênior", f"R$ {c['sr_final']/1e6:,.1f} mi",
@@ -437,6 +443,8 @@ for aba, c in zip(abas, cenarios):
                   f"{(c['pct_meza'] or 0)*100:.1f}% do valor de face")
         m3.metric("Júnior", f"R$ {c['jr_final']/1e6:,.1f} mi",
                   f"{(c['retorno_jr'] or 0)*100:+.1f}% de retorno")
+
+
 
 st.divider()
 
