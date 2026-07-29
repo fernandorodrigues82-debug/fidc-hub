@@ -276,7 +276,7 @@ else:
          "rating": "Sem rating", "perda base (%)": 2.0, "correlação macro (%)": 90.0},
     ])
     editado = st.data_editor(
-        st.session_state.get("tabela_pools_perdas", default_pools),
+        default_pools,
         key="tabela_pools_perdas", num_rows="dynamic", width="stretch",
         column_config={
             "tipo de risco": st.column_config.SelectboxColumn(
