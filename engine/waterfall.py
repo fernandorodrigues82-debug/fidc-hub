@@ -37,6 +37,14 @@ class Classe:
     # mensal: a taxa-alvo é paga em caixa todo mês, desde o início (mesmo
     # durante rampa/carência) -- o saldo não capitaliza; se o caixa do mês
     # não bastar, capitaliza só a diferença não paga.
+    modo_amortizacao: str = "sequencial"  # "sequencial" | "programada"
+    meses_amortizacao_programada: int | None = None
+    # sequencial (default): recebe o quanto o caixa permitir, até quitar o
+    # saldo, antes de sobrar algo pra próxima classe (cascata clássica).
+    # programada: amortiza uma parcela fixa por mês (saldo no início da
+    # amortização / meses_amortizacao_programada), travada -- mesmo que
+    # sobre caixa, o excedente passa pra próxima classe da lista. Se
+    # meses_amortizacao_programada não for informado, cai no sequencial.
 
 
 @dataclass
@@ -97,7 +105,11 @@ class Resultado:
 def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
     """vetor_inadimplencia: opcional, taxa de perda por mês (sobrepõe a
     inadimplência base x stress — usado pelo Monte Carlo)."""
-    n_natural = int(round(e.meses_carencia + e.prazo_medio_meses * 3 + 6))
+    maior_programada = max([c.meses_amortizacao_programada or 0
+                        for c in e.classes[:-1]], default=0)
+    n_natural = int(round(max(
+        e.meses_carencia + e.prazo_medio_meses * 3 + 6,
+        e.meses_carencia + maior_programada + 2)))
     n = min(n_natural, e.prazo_maximo_meses) if e.prazo_maximo_meses else n_natural
     d = min(0.95, e.inadimplencia_am * e.stress)
     q = 1.0 / e.prazo_medio_meses
@@ -120,6 +132,7 @@ def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
     chamadas_residual = []
     pago_residual = perdas_acum = 0.0
     gatilho_mes = None
+    saldo_inicio_amort = [None] * len(pagaveis)
     linhas = []
 
     for m in range(1, n + 1):
@@ -199,8 +212,18 @@ def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
             if forcar_fim:  # fim do horizonte: liquida carteira remanescente
                 caixa += carteira * (1 - d_m)
                 carteira = 0.0
-            for i in range(len(pagaveis)):       # sequencial por senioridade
-                amort[i] = min(caixa, saldos[i])
+            if saldo_inicio_amort[0] is None:  # 1a vez na fase -- trava a
+                # referência pra quem for "programada" (mesmo mês pra todas,
+                # já que amortização começa junto pro fundo inteiro)
+                saldo_inicio_amort = list(saldos)
+            for i, c in enumerate(pagaveis):     # sequencial por senioridade
+                if (not forcar_fim and c.modo_amortizacao == "programada"
+                        and c.meses_amortizacao_programada):
+                    alvo = (saldo_inicio_amort[i]
+                           / c.meses_amortizacao_programada)
+                    amort[i] = min(caixa, alvo, saldos[i])
+                else:
+                    amort[i] = min(caixa, saldos[i])
                 saldos[i] -= amort[i]
                 caixa -= amort[i]
             if all(s <= 1e-6 for s in saldos):
@@ -364,7 +387,11 @@ def montecarlo(e: Estrutura, n_sims: int = 500, vol: float = 0.5,
     com percentis de TIR e probabilidades de perda.
     """
     rng = np.random.default_rng(seed)
-    n_natural = int(round(e.meses_carencia + e.prazo_medio_meses * 3 + 6))
+    maior_programada = max([c.meses_amortizacao_programada or 0
+                        for c in e.classes[:-1]], default=0)
+    n_natural = int(round(max(
+        e.meses_carencia + e.prazo_medio_meses * 3 + 6,
+        e.meses_carencia + maior_programada + 2)))
     n = min(n_natural, e.prazo_maximo_meses) if e.prazo_maximo_meses else n_natural
     base = e.inadimplencia_am * e.stress
 
@@ -415,7 +442,10 @@ def estrutura_de_params(params: dict) -> Estrutura:
     todo em vez de ficar parado no trecho final)."""
     classes = [Classe(c["nome"], c["pct"], c.get("taxa_am", 0.0),
                       residual=c.get("residual", False),
-                      modo_remuneracao=c.get("modo_remuneracao", "capitalizado"))
+                      modo_remuneracao=c.get("modo_remuneracao", "capitalizado"),
+                      modo_amortizacao=c.get("modo_amortizacao", "sequencial"),
+                      meses_amortizacao_programada=c.get(
+                          "meses_amortizacao_programada"))
               for c in params["classes"]]
     if "meses_revolvencia" in params:
         meses_carencia = (params.get("meses_revolvencia", 24)

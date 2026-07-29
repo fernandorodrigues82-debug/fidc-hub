@@ -111,14 +111,18 @@ def _buscar_curva_pre():
 
 MODO_REMUNERACAO = ["Capitalizada (paga com o principal)",
                     "Mensal (paga em caixa desde o início)"]
+MODO_AMORTIZACAO = ["Sequencial (cascata por senioridade)",
+                    "Programada (parcela fixa por N meses)"]
 
 CLASSES_PADRAO = pd.DataFrame([
     {"Classe": "Sênior", "% do PL": 75.0,
      "Benchmark": "CDI + spread (a.a.)", "Valor": 3.0,
-     "Remuneração": MODO_REMUNERACAO[0]},
+     "Remuneração": MODO_REMUNERACAO[0],
+     "Amortização": MODO_AMORTIZACAO[0], "Meses p/ amortizar": 0},
     {"Classe": "Mezanino", "% do PL": 10.0,
      "Benchmark": "CDI + spread (a.a.)", "Valor": 6.0,
-     "Remuneração": MODO_REMUNERACAO[0]},
+     "Remuneração": MODO_REMUNERACAO[0],
+     "Amortização": MODO_AMORTIZACAO[0], "Meses p/ amortizar": 0},
 ])
 
 DEFAULTS = dict(pl=100e6, sub_min=12.0, cdi_aa=12.0, ajuste_curva=0.0,
@@ -179,6 +183,9 @@ if pend_full := st.session_state.pop("_carregar_simulacao", None):
         if "Remuneração" not in df_classes.columns:
             df_classes["Remuneração"] = MODO_REMUNERACAO[0]  # compat: sim
             # salva antes desta feature -- todas capitalizavam, como sempre
+        if "Amortização" not in df_classes.columns:
+            df_classes["Amortização"] = MODO_AMORTIZACAO[0]  # compat: sim
+            df_classes["Meses p/ amortizar"] = 0  # salva antes desta feature
         st.session_state["classes_df"] = df_classes
     st.session_state["sim_carregada_id"] = pend_full.get("_sim_id")
     st.session_state["sim_carregada_nome"] = pend_full.get("_sim_nome", "")
@@ -326,6 +333,18 @@ cdf = st.data_editor(
                  "começa. Mensal: paga em caixa todo mês, desde o "
                  "início (mesmo em rampa/carência) — se o caixa do mês "
                  "não bastar, capitaliza só a diferença."),
+        "Amortização": st.column_config.SelectboxColumn(
+            options=MODO_AMORTIZACAO, required=True,
+            help="Sequencial: recebe o quanto o caixa permitir até "
+                 "quitar o saldo, antes de sobrar algo pra próxima "
+                 "classe. Programada: amortiza uma parcela fixa por mês "
+                 "(saldo no início da amortização ÷ meses informados) — "
+                 "o excedente de caixa passa pra próxima classe da "
+                 "lista, em vez de acelerar esta."),
+        "Meses p/ amortizar": st.column_config.NumberColumn(
+            min_value=0, step=1,
+            help="Só usado se Amortização = Programada. 0 = ignorado "
+                 "(cai no sequencial)."),
     })
 cdf = cdf.dropna(subset=["Classe"]).reset_index(drop=True)
 soma_pct = float(cdf["% do PL"].fillna(0).sum())
@@ -468,9 +487,23 @@ classes = [Classe(str(row["Classe"]), float(row["% do PL"]) / 100,
                   _taxa_am(row["Benchmark"], float(row["Valor"] or 0), cdi,
                           ajuste_curva),
                   modo_remuneracao=("mensal" if row.get("Remuneração") ==
-                                    MODO_REMUNERACAO[1] else "capitalizado"))
+                                    MODO_REMUNERACAO[1] else "capitalizado"),
+                  modo_amortizacao=("programada" if row.get("Amortização") ==
+                                    MODO_AMORTIZACAO[1] else "sequencial"),
+                  meses_amortizacao_programada=(
+                      int(row["Meses p/ amortizar"])
+                      if row.get("Amortização") == MODO_AMORTIZACAO[1]
+                      and row.get("Meses p/ amortizar") else None))
            for _, row in cdf.iterrows()]
 classes.append(Classe("Júnior", pct_sub / 100, 0.0, residual=True))
+
+for _, row in cdf.iterrows():
+    if (row.get("Amortização") == MODO_AMORTIZACAO[1]
+            and not row.get("Meses p/ amortizar")):
+        st.warning(f"⚠️ {row['Classe']}: Amortização = Programada mas "
+                  "'Meses p/ amortizar' está em 0 — caindo no sequencial "
+                  "por enquanto. Preencha o número de meses pra ativar "
+                  "o cronograma fixo.")
 
 with st.expander("📐 Equivalência CDI+ ↔ pré por classe (dado o CDI acima)",
                  expanded=True):
@@ -575,7 +608,10 @@ if orig_ativo:
             classes_editor=cdf.to_dict(orient="records"),
             classes=[{"nome": c.nome, "pct": c.pct, "taxa_am": c.taxa_am,
                      "residual": c.residual,
-                     "modo_remuneracao": c.modo_remuneracao} for c in classes])
+                     "modo_remuneracao": c.modo_remuneracao,
+                     "modo_amortizacao": c.modo_amortizacao,
+                     "meses_amortizacao_programada":
+                         c.meses_amortizacao_programada} for c in classes])
         resumo_sim = dict(
             pl_total=pl, subordinacao=pct_sub / 100,
             todas_integras=res["todas_integras"],
@@ -780,7 +816,8 @@ if origs:
                                    for o in origs if o["id"] == orig_sel))
 
     fp_atual = (round(pl), tuple((c.nome, round(c.pct, 4), round(c.taxa_am, 6),
-                                 c.modo_remuneracao)
+                                 c.modo_remuneracao, c.modo_amortizacao,
+                                 c.meses_amortizacao_programada)
                                  for c in classes), round(t_ces, 6),
                prazo_dias, rampa, carencia, round(inad, 6),
                round(stress, 2), round(custo_inicial, 2), custo_inicial_meses,
@@ -835,7 +872,10 @@ if origs:
                       classes=[{"nome": c.nome, "pct": c.pct,
                                 "taxa_am": c.taxa_am,
                                 "residual": c.residual,
-                                "modo_remuneracao": c.modo_remuneracao}
+                                "modo_remuneracao": c.modo_remuneracao,
+                                "modo_amortizacao": c.modo_amortizacao,
+                                "meses_amortizacao_programada":
+                                    c.meses_amortizacao_programada}
                                for c in classes],
                       resumo=res)
         deal_id = db.criar_deal(orig_sel, nome_fundo, params)
