@@ -109,11 +109,16 @@ def _buscar_curva_pre():
     st.session_state["_curva_status"] = (nivel, msg)
 
 
+MODO_REMUNERACAO = ["Capitalizada (paga com o principal)",
+                    "Mensal (paga em caixa desde o início)"]
+
 CLASSES_PADRAO = pd.DataFrame([
     {"Classe": "Sênior", "% do PL": 75.0,
-     "Benchmark": "CDI + spread (a.a.)", "Valor": 3.0},
+     "Benchmark": "CDI + spread (a.a.)", "Valor": 3.0,
+     "Remuneração": MODO_REMUNERACAO[0]},
     {"Classe": "Mezanino", "% do PL": 10.0,
-     "Benchmark": "CDI + spread (a.a.)", "Valor": 6.0},
+     "Benchmark": "CDI + spread (a.a.)", "Valor": 6.0,
+     "Remuneração": MODO_REMUNERACAO[0]},
 ])
 
 DEFAULTS = dict(pl=100e6, sub_min=12.0, cdi_aa=12.0, ajuste_curva=0.0,
@@ -170,7 +175,11 @@ if pend_full := st.session_state.pop("_carregar_simulacao", None):
         st.session_state["carencia"] = (pend_full.get("revolv", 24)
                                         + pend_full.get("carencia", 0))
     if "classes_editor" in pend_full:
-        st.session_state["classes_df"] = pd.DataFrame(pend_full["classes_editor"])
+        df_classes = pd.DataFrame(pend_full["classes_editor"])
+        if "Remuneração" not in df_classes.columns:
+            df_classes["Remuneração"] = MODO_REMUNERACAO[0]  # compat: sim
+            # salva antes desta feature -- todas capitalizavam, como sempre
+        st.session_state["classes_df"] = df_classes
     st.session_state["sim_carregada_id"] = pend_full.get("_sim_id")
     st.session_state["sim_carregada_nome"] = pend_full.get("_sim_nome", "")
 
@@ -310,6 +319,13 @@ cdf = st.data_editor(
         "Valor": st.column_config.NumberColumn(
             step=0.25, help="Spread (a.a.), % do CDI, taxa prefixada (a.a.) "
                             "ou taxa fixa (a.m.), conforme o benchmark."),
+        "Remuneração": st.column_config.SelectboxColumn(
+            options=MODO_REMUNERACAO, required=True,
+            help="Capitalizada: a taxa-alvo se acumula no saldo e só é "
+                 "paga junto com o principal, quando a amortização "
+                 "começa. Mensal: paga em caixa todo mês, desde o "
+                 "início (mesmo em rampa/carência) — se o caixa do mês "
+                 "não bastar, capitaliza só a diferença."),
     })
 cdf = cdf.dropna(subset=["Classe"]).reset_index(drop=True)
 soma_pct = float(cdf["% do PL"].fillna(0).sum())
@@ -450,7 +466,9 @@ with st.sidebar:
 
 classes = [Classe(str(row["Classe"]), float(row["% do PL"]) / 100,
                   _taxa_am(row["Benchmark"], float(row["Valor"] or 0), cdi,
-                          ajuste_curva))
+                          ajuste_curva),
+                  modo_remuneracao=("mensal" if row.get("Remuneração") ==
+                                    MODO_REMUNERACAO[1] else "capitalizado"))
            for _, row in cdf.iterrows()]
 classes.append(Classe("Júnior", pct_sub / 100, 0.0, residual=True))
 
@@ -556,7 +574,8 @@ if orig_ativo:
             sub_min=sub_min_pct, stress=stress,
             classes_editor=cdf.to_dict(orient="records"),
             classes=[{"nome": c.nome, "pct": c.pct, "taxa_am": c.taxa_am,
-                     "residual": c.residual} for c in classes])
+                     "residual": c.residual,
+                     "modo_remuneracao": c.modo_remuneracao} for c in classes])
         resumo_sim = dict(
             pl_total=pl, subordinacao=pct_sub / 100,
             todas_integras=res["todas_integras"],
@@ -593,8 +612,13 @@ with g1:
     if e.meses_rampa:
         fig.add_vline(x=e.meses_rampa, line_dash="dash", line_color="#999",
                       annotation_text="100% chamado")
-    fig.add_vline(x=e.meses_carencia, line_dash="dot",
-                  line_color="#B33A3A", annotation_text="início da amortização")
+    mes_amort_real = (min(e.meses_carencia, res["gatilho_mes"])
+                      if res.get("gatilho_mes") else e.meses_carencia)
+    texto_vline = ("início da amortização (gatilho de subordinação)"
+                   if res.get("gatilho_mes") and res["gatilho_mes"] < e.meses_carencia
+                   else "início da amortização")
+    fig.add_vline(x=mes_amort_real, line_dash="dot",
+                  line_color="#B33A3A", annotation_text=texto_vline)
     fig.update_layout(title="Carteira e saldos por classe (R$ mi)",
                       xaxis_title="Mês", height=380,
                       legend=dict(orientation="h", y=-0.3))
@@ -755,7 +779,8 @@ if origs:
                                    o["razao_social"].split()[0]
                                    for o in origs if o["id"] == orig_sel))
 
-    fp_atual = (round(pl), tuple((c.nome, round(c.pct, 4), round(c.taxa_am, 6))
+    fp_atual = (round(pl), tuple((c.nome, round(c.pct, 4), round(c.taxa_am, 6),
+                                 c.modo_remuneracao)
                                  for c in classes), round(t_ces, 6),
                prazo_dias, rampa, carencia, round(inad, 6),
                round(stress, 2), round(custo_inicial, 2), custo_inicial_meses,
@@ -809,7 +834,9 @@ if origs:
                                          else None),
                       classes=[{"nome": c.nome, "pct": c.pct,
                                 "taxa_am": c.taxa_am,
-                                "residual": c.residual} for c in classes],
+                                "residual": c.residual,
+                                "modo_remuneracao": c.modo_remuneracao}
+                               for c in classes],
                       resumo=res)
         deal_id = db.criar_deal(orig_sel, nome_fundo, params)
         db.mover_etapa(orig_sel, "Aprovado")

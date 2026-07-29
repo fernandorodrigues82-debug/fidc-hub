@@ -31,6 +31,12 @@ class Classe:
     pct: float                 # fração do PL
     taxa_am: float = 0.0       # taxa-alvo a.m. (ignorada na residual)
     residual: bool = False     # última classe: fica com o excedente
+    modo_remuneracao: str = "capitalizado"  # "capitalizado" | "mensal"
+    # capitalizado: a taxa-alvo se acumula no saldo e só é paga junto com o
+    # principal, quando a amortização começa (comportamento histórico).
+    # mensal: a taxa-alvo é paga em caixa todo mês, desde o início (mesmo
+    # durante rampa/carência) -- o saldo não capitaliza; se o caixa do mês
+    # não bastar, capitaliza só a diferença não paga.
 
 
 @dataclass
@@ -150,8 +156,19 @@ def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
             pago_desp_inicial = min(caixa, despesa_inicial_mensal)
             caixa -= pago_desp_inicial
 
+        # remuneração: classes "mensal" recebem em caixa todo mês (por
+        # senioridade -- o índice i já reflete a ordem), capitalizando só o
+        # que faltar pagar; classes "capitalizado" seguem como antes
+        juros_mensal_mes = [0.0] * len(pagaveis)
         for i, c in enumerate(pagaveis):
-            saldos[i] *= (1 + c.taxa_am)
+            if c.modo_remuneracao == "mensal":
+                devido = saldos[i] * c.taxa_am
+                pago = min(caixa, devido)
+                caixa -= pago
+                saldos[i] += (devido - pago)  # capitaliza só a diferença
+                juros_mensal_mes[i] = pago
+            else:
+                saldos[i] *= (1 + c.taxa_am)
 
         # índice de subordinação dinâmico: colchão sobre os ativos
         ativos = carteira + caixa
@@ -190,7 +207,7 @@ def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
                 amort_res = caixa
                 caixa = 0.0
         for i in range(len(pagaveis)):
-            pagos[i] += amort[i]
+            pagos[i] += amort[i] + juros_mensal_mes[i]
         pago_residual += amort_res
 
         linha = dict(mes=m, fase=fase, carteira=carteira, caixa=caixa,
@@ -203,7 +220,8 @@ def simular(e: Estrutura, vetor_inadimplencia=None) -> Resultado:
                      despesa_inicial_mes=pago_desp_inicial)
         for i, c in enumerate(pagaveis):
             linha[f"saldo_{c.nome}"] = saldos[i]
-            linha[f"pago_{c.nome}"] = amort[i]
+            linha[f"pago_{c.nome}"] = amort[i] + juros_mensal_mes[i]
+            linha[f"juros_mensal_{c.nome}"] = juros_mensal_mes[i]
         linhas.append(linha)
         if fase == "amortização" and carteira <= 1e-2 and caixa <= 1e-2:
             break
@@ -396,7 +414,8 @@ def estrutura_de_params(params: dict) -> Estrutura:
     hoje (o período total ganha o comportamento novo: revolve o tempo
     todo em vez de ficar parado no trecho final)."""
     classes = [Classe(c["nome"], c["pct"], c.get("taxa_am", 0.0),
-                      residual=c.get("residual", False))
+                      residual=c.get("residual", False),
+                      modo_remuneracao=c.get("modo_remuneracao", "capitalizado"))
               for c in params["classes"]]
     if "meses_revolvencia" in params:
         meses_carencia = (params.get("meses_revolvencia", 24)
